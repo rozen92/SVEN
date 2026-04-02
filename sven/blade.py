@@ -115,9 +115,7 @@ class Blade:
         using a forward Euler scheme.
         """
 
-        wind = np.zeros(3)
-        wind[0] = uInfty
-        self.wakeNodes += wind*timeStep + self.wakeNodesInductions*timeStep
+        self.wakeNodes += uInfty * timeStep + self.wakeNodesInductions * timeStep
         return
 
     def storeOldGammaBound(self, gammas):
@@ -174,12 +172,8 @@ class Blade:
 
         relax = 0.05
 
-        uWind = np.zeros(3)
-        uWind[0] = uInfty
-
-        uEffective = (
-            uWind - self.centersTranslationVelocity + nearWakeInducedVelocities + 
-            self.inductionsFromWake)
+        # On utilise directement le vecteur uInfty dans le calcul de la vitesse effective
+        uEffective = (uInfty - self.centersTranslationVelocity + nearWakeInducedVelocities + self.inductionsFromWake)
 
         r = R.from_matrix(self.centersOrientationMatrix)
         uEffectiveInElementRef = r.apply(uEffective, inverse=True)
