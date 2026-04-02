@@ -1,6 +1,10 @@
 import os
 import sys
+import torch
+import numpy as np
+import time
 
+# --- Configuration des chemins ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(script_dir)
 parent_of_project_dir = os.path.dirname(project_dir)
@@ -10,33 +14,27 @@ from sven.windTurbine import *
 from sven.airfoil import *
 from sven.blade import *
 from sven.solver import *
-
 from scipy import interpolate
 
-# Post-processing directory
+# Dossier de sortie
 outDir = 'outputs'
 if not os.path.exists(outDir):
     os.makedirs(outDir)
-else:
-    print("Directory ", outDir, " already exists")
 
-
-
-def NewMexicoWindTurbine(windVelocity,density,nearWakeLength):
+# -----------------------------------------------------------------------------
+# Fonction de création de la turbine Mexico
+# -----------------------------------------------------------------------------
+def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     sign = -1.
     hubRadius = 0.210
     nBlades = 3
-    rotationalVelocity = 44.5163679
-    bladePitch = sign * 0.040143
+    rotationalVelocity = 44.5163679  # Fixe (425 RPM)
+    bladePitch = sign * 0.040143    # Fixe (-2.3°)
     
-    dataAirfoils = np.genfromtxt(
-        './geometry/mexico.blade', skip_header=1, usecols=(7), dtype='U')
+    dataAirfoils = np.genfromtxt('./geometry/mexico.blade', skip_header=1, usecols=(7), dtype='U')
     intAirfoils = np.arange(0, len(dataAirfoils))
-
     data = np.genfromtxt('./geometry/mexico.blade', skip_header=1)
-
     refRadius = data[:,2] 
-
     inputNodesTwistAngles = -sign * np.radians(data[:, 5])
     inputNodesChord = data[:, 6]
 
@@ -50,164 +48,116 @@ def NewMexicoWindTurbine(windVelocity,density,nearWakeLength):
     nodesTwistAngles = np.interp(refRadius, data[:, 2], inputNodesTwistAngles)
     nodesChord = np.interp(refRadius, data[:, 2], inputNodesChord)
 
-    # Build wind turbine
-    hubCenter = [0., 0., 0.]
-    myWT = windTurbine(
-        nBlades, hubCenter, hubRadius, rotationalVelocity, 
-        windVelocity, bladePitch)
-    blades = myWT.initializeTurbine(
-        nodesRadius, nodesChord, nearWakeLength, centersAirfoils, 
-        nodesTwistAngles, myWT.nBlades)
+    myWT = windTurbine(nBlades, [0., 0., 0.], hubRadius, rotationalVelocity, windVelocity, bladePitch)
+    blades = myWT.initializeTurbine(nodesRadius, nodesChord, nearWakeLength, centersAirfoils, nodesTwistAngles, myWT.nBlades)
 
     return blades, myWT, windVelocity, density, 0.01, 1e-4
 
 # -----------------------------------------------------------------------------
-# Some functions for filament outputs 
+# Paramètres globaux de simulation
 # -----------------------------------------------------------------------------
+nRotations = 10.          #
+DegreesPerTimeStep = 10.  # Résolution azimutale
+rotationsKeptInWake = 10  # Longueur du sillage
+nearWakeLength = 360 * rotationsKeptInWake
+innerIter = 12
+density = 1.191           # kg/m3
+N_avg = 3                 # Moyenne sur les 3 derniers tours
+steps_per_rotation = int(360. / DegreesPerTimeStep)
 
-def write_filaments_tp(blades, outDir, it):
-
-    for (iBlade, blade) in enumerate(blades):
-        shape = np.shape(blade.wakeNodes)
-
-        output = open(
-            outDir + '/Filaments_Nodes_' + '_Blade_'+str(iBlade)+'_tStep_'+
-            str(it)+'.tp', 'w')
-        output.write('TITLE="Near-wake nodes"\n')
-        output.write('VARIABLES="X" "Y" "Z" "Circulation"\n')
-        output.write(
-            'ZONE T="Near-wake" I='+str(shape[0])+' J='+str(shape[1]-1)+
-            ', K=1, DT=(SINGLE SINGLE SINGLE SINGLE)\n')
-        for j in range(np.shape(blade.wakeNodes)[1]-1):
-            for i in range(np.shape(blade.wakeNodes)[0]):
-                output.write(
-                    str(blade.wakeNodes[i,j,0]) + " " + 
-                    str(blade.wakeNodes[i,j,1]) + " " + 
-                    str(blade.wakeNodes[i,j,2]) + " " +
-                    str(blade.trailFilamentsCirculation[i,j]) + "\n")
-        output.close()
-
-    return
-
-def write_blade_tp(blades, outDir, it):
-
-    for (iBlade, blade) in enumerate(blades):
-        shape = len(blade.bladeNodes)
-
-        output = open(
-            outDir + '/Blade_'+str(iBlade)+'_Nodes_tStep_'+str(it)+'.tp', 'w')
-        output.write('TITLE="Near-wake nodes"\n')
-        output.write('VARIABLES="X" "Y" "Z"\n')
-        output.write(
-            'ZONE T="Near-wake" I='+str(shape)+' J='+str(2)+
-            ', K=1, DT=(SINGLE SINGLE SINGLE)\n')
-        for i in range(shape):
-                output.write(
-                    str(blade.bladeNodes[i,0]-1./4.*blade.nodeChords[i]) + " " + 
-                    str(blade.bladeNodes[i,1]) + " " + 
-                    str(blade.bladeNodes[i,2]) + "\n")
-        for i in range(shape):
-                output.write(
-                    str(blade.trailingEdgeNode[i,0]) + " " + 
-                    str(blade.trailingEdgeNode[i,1]) + " " + 
-                    str(blade.trailingEdgeNode[i,2]) + "\n")
-        output.close()
-    return
+# Extraction du rayon max pour calcul du TSR
+data_geom = np.genfromtxt('./geometry/mexico.blade', skip_header=1)
+R_max = 0.210 + np.max(data_geom[:,2]) 
+Omega = 44.5163679 
 
 # -----------------------------------------------------------------------------
-# Choose a wind velocity and wake parameters 
+# Grille de paramètres (Modifier ici pour ton dataset)
 # -----------------------------------------------------------------------------
+yaws_deg = np.array([0.0, 15.0, 30.0]) # Angles de lacet
+tsrs = np.array([4.5, 6.6, 9.0])       # Tip Speed Ratios
 
-cases = ["15"]#, "10", "24"] # wind velocity
+global_forces = None 
+global_start_time = time.time()
 
-nRotations = 10. # Number of rotations
-DegreesPerTimeStep = 10. # Azimuthal step
-rotationsKeptInWake = 10 # Equivalent number of rotations kept for wake length  
-nearWakeLength = 360*rotationsKeptInWake # Wake length
-innerIter  = 12 # Iterations for GammaBound convergence
+print(f"Lancement de la campagne : {len(yaws_deg) * len(tsrs)} simulations.")
 
-
-# Choose if you want post process files to be written 
-
-wakePostProcess = True
-forcesPostProcess = True
-
-
-for caseID in cases:
-    if(caseID == "10"):
-        windVelocity = 10.05
-        density = 1.197
-    if(caseID == "15"):
-        windVelocity = 15.06
-        density = 1.191
-    if(caseID == "24"):
-        windVelocity = 24.05
-        density = 1.195
-    Blades, WindTurbine, uInfty, density, deltaFlts, deltaPtcles = (
-         NewMexicoWindTurbine(windVelocity,density,nearWakeLength))
+# -----------------------------------------------------------------------------
+# Boucles paramétriques
+# -----------------------------------------------------------------------------
+for i_yaw, yaw_val in enumerate(yaws_deg):
+    yaw_rad = np.radians(yaw_val)
     
-    timeStep = np.radians(DegreesPerTimeStep) / WindTurbine.rotationalVelocity
-    
-    timeEnd = np.radians(nRotations * 360.) / WindTurbine.rotationalVelocity
-    refAzimuth = -WindTurbine.rotationalVelocity * timeStep
-    timeSteps = np.arange(0., timeEnd, timeStep)
-
-# -----------------------------------------------------------------------------
-# Time loop 
-# -----------------------------------------------------------------------------
-
-    timeSimulation = 0.
-    iterationVect = []
-    startTime = time.time()
-
-    for (it, t) in enumerate(timeSteps):
-
-        refAzimuth += WindTurbine.rotationalVelocity * timeStep
-        WindTurbine.updateTurbine(refAzimuth)
-
-        print('iteration, time, finaltime: ', it, t, timeSteps[-1])
-        partsPerFil = 1
-        timeSimulation += timeStep
-        update(
-            Blades, uInfty, timeStep, timeSimulation, innerIter, deltaFlts, 
-            startTime, iterationVect)
-
+    for i_tsr, tsr_val in enumerate(tsrs):
+        case_start = time.time()
         
+        # Calcul du vecteur vent à partir du TSR et du Yaw
+        V_mag = (Omega * R_max) / tsr_val
+        uInfty = np.array([V_mag * np.cos(yaw_rad), V_mag * np.sin(yaw_rad), 0.0], dtype=np.float32)
 
-        if(wakePostProcess):
-            write_blade_tp(Blades, outDir, it)
-            write_filaments_tp(Blades, outDir, it)
+        print(f"\n--- Cas: Yaw {yaw_val}°, TSR {tsr_val} (V={V_mag:.2f}m/s) ---")
 
-        if(forcesPostProcess):
-            centers = Blades[0].centers
+        # Initialisation
+        Blades, WindTurbine, _, _, deltaFlts, _ = NewMexicoWindTurbine(uInfty, density, nearWakeLength)
+        
+        timeStep = np.radians(DegreesPerTimeStep) / WindTurbine.rotationalVelocity
+        timeEnd = np.radians(nRotations * 360.) / WindTurbine.rotationalVelocity
+        timeSteps = np.arange(0., timeEnd, timeStep)
 
+        num_sections = len(Blades[0].centers)
+        total_steps = len(timeSteps)
+        start_avg_it = total_steps - (N_avg * steps_per_rotation)
+
+        # Allocation mémoire pour ce cas
+        if global_forces is None:
+            global_forces = np.zeros((len(yaws_deg), len(tsrs), 2, steps_per_rotation, num_sections))
+        
+        full_history = np.zeros((total_steps, 2, num_sections))
+        Fn_history = np.zeros((N_avg, steps_per_rotation, num_sections))
+        Ft_history = np.zeros((N_avg, steps_per_rotation, num_sections))
+
+        # Boucle temporelle
+        refAzimuth = -WindTurbine.rotationalVelocity * timeStep
+        timeSim = 0.
+        for it in range(total_steps):
+            refAzimuth += WindTurbine.rotationalVelocity * timeStep
+            WindTurbine.updateTurbine(refAzimuth)
+            timeSim += timeStep
+            
+            # Mise à jour du solveur (SVEN)
+            update(Blades, uInfty, timeStep, timeSim, innerIter, deltaFlts, case_start, [])
+
+            # Calcul des forces Fn/Ft
             Fn, Ft = WindTurbine.evaluateForces(density)
-            output = open(
-                'outputs/bladeForces_case_'+caseID+'_'+str(it)+'.dat', 'w')
-            for i in range(len(centers)):
-                output.write(
-                    str(np.linalg.norm(centers[i])) + ' ' + str(Fn[i]) + ' ' +
-                    str(Ft[i]) + '\n')
-            output.close()
+            
+            # Stockage de l'historique complet (RAM)
+            full_history[it, 0, :] = Fn
+            full_history[it, 1, :] = Ft
 
-            output = open('outputs/liftDistribution_case_'+caseID+'.dat', 'w')
-            liftDistribution = Blades[0].lift
-            for i in range(len(centers)):
-                TwistAndPitch = WindTurbine.bladePitch + .5 * (
-                    WindTurbine.nodesTwistAngles[i] + 
-                    WindTurbine.nodesTwistAngles[i + 1])
-                aoa_th = np.degrees(
-                    np.arctan2(
-                        uInfty, 
-                        WindTurbine.rotationalVelocity * centers[i][1]
-                        ) - TwistAndPitch)
-                output.write(
-                    str(np.linalg.norm(centers[i])) + ' ' +
-                    str(liftDistribution[i]) + ' ' +
-                    str(np.degrees(Blades[0].attackAngle[i])) + ' ' +
-                    str(Blades[0].effectiveVelocity[i]) + '\n')
-            output.close()
+            # Capture pour la moyenne périodique
+            if it >= start_avg_it:
+                t_idx = int((it - start_avg_it) // steps_per_rotation)
+                a_idx = int((it - start_avg_it) % steps_per_rotation)
+                if t_idx < N_avg:
+                    Fn_history[t_idx, a_idx, :] = Fn
+                    Ft_history[t_idx, a_idx, :] = Ft
+            
+            if it % 50 == 0: print(f" Itération {it}/{total_steps}")
 
-    print('Total simulation time: ', time.time() - startTime)
+        # Sauvegarde de l'historique de convergence (un seul fichier par cas)
+        conv_path = os.path.join(outDir, f'conv_yaw{yaw_val}_tsr{tsr_val}.pt')
+        torch.save(torch.tensor(full_history, dtype=torch.float32), conv_path)
 
+        # Stockage dans le tenseur global (moyenne atemporelle)
+        global_forces[i_yaw, i_tsr, 0, :, :] = np.mean(Fn_history, axis=0)
+        global_forces[i_yaw, i_tsr, 1, :, :] = np.mean(Ft_history, axis=0)
+        
+        print(f" Terminé en {time.time() - case_start:.1f}s")
 
+# -----------------------------------------------------------------------------
+# Sauvegarde finale du Dataset
+# -----------------------------------------------------------------------------
+dataset_path = os.path.join(outDir, 'dataset_forces_mexico.pt')
+torch.save(torch.tensor(global_forces, dtype=torch.float32), dataset_path)
+
+print(f"\nSimulation globale achevée en {(time.time() - global_start_time)/60:.1f} min.")
+print(f"Dataset sauvegardé : {dataset_path} (Shape: {global_forces.shape})")
