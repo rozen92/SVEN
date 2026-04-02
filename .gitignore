@@ -3,9 +3,10 @@ build
 PITCHOU.egg-info
 
 
-examples/*/outputs/
+examples/*/outputs/*
 examples/ellipticalWing/elliptical_case_plot.eps
 examples/ellipticalWing/elliptical_cse_plot.png
 examples/newMexico/ForceComparison.png
 examples/VAWT/*.png
 **/__pycache__/
+!examples/newMexico/outputs/dataset_forces_mexico.pt
