@@ -28,8 +28,8 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     sign = -1.
     hubRadius = 0.210
     nBlades = 3
-    rotationalVelocity = 44.5163679  # Fixe (425 RPM)
-    bladePitch = sign * 0.040143    # Fixe (-2.3°)
+    rotationalVelocity = 44.5163679  
+    bladePitch = sign * 0.040143
     
     dataAirfoils = np.genfromtxt('./geometry/mexico.blade', skip_header=1, usecols=(7), dtype='U')
     intAirfoils = np.arange(0, len(dataAirfoils))
@@ -71,7 +71,7 @@ R_max = 0.210 + np.max(data_geom[:,2])
 Omega = 44.5163679 
 
 # -----------------------------------------------------------------------------
-# Grille de paramètres (Modifier ici pour ton dataset)
+# Grille de paramètres
 # -----------------------------------------------------------------------------
 yaws_deg = np.array([0.0, 15.0, 30.0]) # Angles de lacet
 tsrs = np.array([4.5, 6.6, 9.0])       # Tip Speed Ratios

@@ -1,12 +1,27 @@
-# Test cases 
+# Génération de Dataset : Éolienne New Mexico
 
-Three test cases are available : 
+Ce module est dédié à la simulation aérodynamique de l'éolienne **New Mexico** via le code SVEN.
 
-* ellipticalwing : Compares the aerodynamic forces over an elliptical wing using the vortex code with a theoretical value.
-* newMexico : Compares aerodynamic forces over the newMexico wind turbine blades with results obtained from the CASTOR FVW solver.
-* VAWT : Compares the aerodynamic loads on a vertical-axis wind turbine blade with experimental data from the Strickland configuration.
+## Base de Données Aérodynamique
+Le solveur calcule les forces aérodynamiques normales ($F_n$) et tangentielles ($F_t$) en faisant varier les paramètres suivants :
 
-For each example, it is possible to generate Tecplot (.tp) files, which can be visualized using a post-processing tool to analyze the behavior of the vortex wake behind the studied structure.
+* **Position Radiale ($r$) :** Discrétisation de la pale basée sur la géométrie réelle du fichier `mexico.blade`.
+* **Position Azimutale ($\theta$) :** Rotation complète du rotor (0 à 360°) avec un pas par défaut de 10°.
+* **Angle de Lacet ($\gamma$) :** Désalignement de la turbine par rapport au vecteur vent entrant (Yaw).
+* **Tip Speed Ratio (TSR) :** Ratio entre la vitesse en bout de pale et la vitesse du vent incident.
+
+## Format de Sortie (Dataset)
+Pour faciliter l'exploitation des données et l'entraînement de modèles de Machine Learning, les résultats ne sont plus stockés dans des fichiers texte individuels mais regroupés dans un **tenseur PyTorch** unique (`.pt`).
+
+La structure du tenseur est la suivante :  
+`[Index_Yaw, Index_TSR, Type_Force (Fn/Ft), Index_Azimut, Index_Section_Radiale]`.
+
+## Suivi de la Convergence
+Pour chaque combinaison (Yaw, TSR), un fichier d'historique est généré dans le dossier `outputs/`. Cela permet de vérifier graphiquement que la simulation a bien atteint un **régime périodique permanent** avant l'extraction de la moyenne finale.
+
+---
+
+*Note : Les anciens cas de test (aile elliptique et VAWT) ont été retirés pour se concentrer exclusivement sur la configuration New Mexico. *
 
 # How to 
 
