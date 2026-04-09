@@ -73,8 +73,8 @@ Omega = 44.5163679
 # -----------------------------------------------------------------------------
 # Grille de paramètres
 # -----------------------------------------------------------------------------
-yaws_deg = np.array([0.0, 15.0, 30.0]) # Angles de lacet
-tsrs = np.array([4.5, 6.6, 9.0])       # Tip Speed Ratios
+yaws_deg = np.array([0.0, 15.0, 30.0]) # Angles de lacet (yaw)
+tsrs = np.array([4.5, 6.6, 9.0])       # Tip Speed Ratios (TSR)
 
 global_forces = None 
 global_start_time = time.time()
@@ -107,13 +107,16 @@ for i_yaw, yaw_val in enumerate(yaws_deg):
         total_steps = len(timeSteps)
         start_avg_it = total_steps - (N_avg * steps_per_rotation)
 
-        # Allocation mémoire pour ce cas
+        # Allocation mémoire pour ce cas (passage à 4 dimensions)
         if global_forces is None:
-            global_forces = np.zeros((len(yaws_deg), len(tsrs), 2, steps_per_rotation, num_sections))
+            # Shape : [Yaws, TSRs, 4 (Fn, Ft, Veff, Alpha), Azimuts, Sections]
+            global_forces = np.zeros((len(yaws_deg), len(tsrs), 4, steps_per_rotation, num_sections))
         
-        full_history = np.zeros((total_steps, 2, num_sections))
+        full_history = np.zeros((total_steps, 4, num_sections))
         Fn_history = np.zeros((N_avg, steps_per_rotation, num_sections))
         Ft_history = np.zeros((N_avg, steps_per_rotation, num_sections))
+        Veff_history = np.zeros((N_avg, steps_per_rotation, num_sections))
+        Alpha_history = np.zeros((N_avg, steps_per_rotation, num_sections))
 
         # Boucle temporelle
         refAzimuth = -WindTurbine.rotationalVelocity * timeStep
@@ -129,9 +132,15 @@ for i_yaw, yaw_val in enumerate(yaws_deg):
             # Calcul des forces Fn/Ft
             Fn, Ft = WindTurbine.evaluateForces(density)
             
+            # Extraction de la vitesse effective et de l'angle d'attaque
+            Veff = WindTurbine.blades[0].effectiveVelocity
+            Alpha = WindTurbine.blades[0].attackAngle
+            
             # Stockage de l'historique complet (RAM)
             full_history[it, 0, :] = Fn
             full_history[it, 1, :] = Ft
+            full_history[it, 2, :] = Veff
+            full_history[it, 3, :] = Alpha
 
             # Capture pour la moyenne périodique
             if it >= start_avg_it:
@@ -140,16 +149,20 @@ for i_yaw, yaw_val in enumerate(yaws_deg):
                 if t_idx < N_avg:
                     Fn_history[t_idx, a_idx, :] = Fn
                     Ft_history[t_idx, a_idx, :] = Ft
+                    Veff_history[t_idx, a_idx, :] = Veff
+                    Alpha_history[t_idx, a_idx, :] = Alpha
             
             if it % 50 == 0: print(f" Itération {it}/{total_steps}")
 
-        # Sauvegarde de l'historique de convergence (un seul fichier par cas)
+        # Sauvegarde de l'historique de convergence
         conv_path = os.path.join(outDir, f'conv_yaw{yaw_val}_tsr{tsr_val}.pt')
         torch.save(torch.tensor(full_history, dtype=torch.float32), conv_path)
 
         # Stockage dans le tenseur global (moyenne atemporelle)
         global_forces[i_yaw, i_tsr, 0, :, :] = np.mean(Fn_history, axis=0)
         global_forces[i_yaw, i_tsr, 1, :, :] = np.mean(Ft_history, axis=0)
+        global_forces[i_yaw, i_tsr, 2, :, :] = np.mean(Veff_history, axis=0)
+        global_forces[i_yaw, i_tsr, 3, :, :] = np.mean(Alpha_history, axis=0)
         
         print(f" Terminé en {time.time() - case_start:.1f}s")
 
