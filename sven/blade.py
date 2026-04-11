@@ -33,6 +33,7 @@ class Blade:
 
         self.gammaBound = np.zeros(len(nodes) - 1, dtype=np.float32)
         self.newGammaBound = np.zeros(len(nodes) - 1, dtype=np.float32)
+        self.f_Gamma = np.zeros(len(nodes) - 1, dtype=np.float32)
         self.oldGammaBound = np.zeros(len(nodes) - 1, dtype=np.float32)
         self.gammaShed = np.zeros(len(nodes) - 1, dtype=np.float32)
         self.gammaTrail = np.zeros(len(nodes), dtype=np.float32)
@@ -192,6 +193,7 @@ class Blade:
 
 
         newGamma = .5 * self.effectiveVelocity * self.centerChords * self.lift
+        self.f_Gamma = np.copy(newGamma)
         newGammaBounds = self.gammaBound + relax * (newGamma - self.gammaBound)
 
         idx = np.where(self.gammaBound == 0)
