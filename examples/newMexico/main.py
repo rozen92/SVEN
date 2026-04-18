@@ -24,6 +24,9 @@ if not os.path.exists(outDir):
 # -----------------------------------------------------------------------------
 # Fonction de création de la turbine Mexico
 # -----------------------------------------------------------------------------
+import pandas as pd
+from scipy import interpolate
+
 def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     sign = -1.
     hubRadius = 0.210
@@ -31,32 +34,59 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     rotationalVelocity = 44.5163679  
     bladePitch = sign * 0.040143
     
+    # 1. Charger les données géométriques d'origine (pour interpolation)
     dataAirfoils = np.genfromtxt('./geometry/mexico.blade', skip_header=1, usecols=(7), dtype='U')
     intAirfoils = np.arange(0, len(dataAirfoils))
-    data = np.genfromtxt('./geometry/mexico.blade', skip_header=1)
-    refRadius = data[:,2] 
-    inputNodesTwistAngles = -sign * np.radians(data[:, 5])
-    inputNodesChord = data[:, 6]
+    data_orig = np.genfromtxt('./geometry/mexico.blade', skip_header=1)
+    
+    refRadius_orig = data_orig[:, 2] 
+    r_nodes_orig = hubRadius + refRadius_orig
+    twist_orig = -sign * np.radians(data_orig[:, 5])
+    chord_orig = data_orig[:, 6]
 
-    f = interpolate.interp1d(data[:, 2], intAirfoils, kind='nearest')
+    # 2. Charger les rayons cibles depuis AeroDeeP
+
+    df_aero = pd.read_csv('./data_AeroDeeP.csv', skiprows=7)
+    r_targets = df_aero['radius'].values  # Les rayons cibles
+    
+    # 3. Recalculer les noeuds nécessaires pour obtenir ces centres
+    N = len(r_targets)
+    nodesRadius_new = np.zeros(N + 1)
+    nodesRadius_new[0] = hubRadius
+    
+    for i in range(N):
+        nodesRadius_new[i+1] = 2 * r_targets[i] - nodesRadius_new[i]
+        
+    # Vérification de sécurité pour la monotonie
+    if not np.all(np.diff(nodesRadius_new) > 0):
+        print("ATTENTION: La grille générée n'est pas strictement croissante.")
+
+    # 4. Interpoler la Corde et le Twist sur les nouveaux nœuds
+    nodesTwistAngles = np.interp(nodesRadius_new, r_nodes_orig, twist_orig)
+    nodesChord = np.interp(nodesRadius_new, r_nodes_orig, chord_orig)
+    
+    # Interpolation des profils aérodynamiques (Airfoils)
+    f_foil = interpolate.interp1d(r_nodes_orig, intAirfoils, kind='nearest', fill_value="extrapolate")
     centersAirfoils = []
-    for i in range(len(refRadius)):
-        foilName = str(dataAirfoils[int(f(refRadius[i]))])
+
+    # On assigne les profils basés sur les rayons cibles (qui sont les centres)
+    for i in range(len(r_targets)):
+        idx_foil = int(f_foil(r_targets[i]))
+        foilName = str(dataAirfoils[idx_foil])
         centersAirfoils.append(Airfoil('./geometry/' + foilName, headerLength=1))
 
-    nodesRadius = hubRadius + refRadius
-    nodesTwistAngles = np.interp(refRadius, data[:, 2], inputNodesTwistAngles)
-    nodesChord = np.interp(refRadius, data[:, 2], inputNodesChord)
 
     myWT = windTurbine(nBlades, [0., 0., 0.], hubRadius, rotationalVelocity, windVelocity, bladePitch)
-    blades = myWT.initializeTurbine(nodesRadius, nodesChord, nearWakeLength, centersAirfoils, nodesTwistAngles, myWT.nBlades)
+    
+  
+    blades = myWT.initializeTurbine(nodesRadius_new, nodesChord, nearWakeLength, centersAirfoils, nodesTwistAngles, myWT.nBlades)
 
     return blades, myWT, windVelocity, density, 0.01, 1e-4
 
 # -----------------------------------------------------------------------------
 # Paramètres globaux de simulation
 # -----------------------------------------------------------------------------
-nRotations = 10.          #
+nRotations = 10.          
 DegreesPerTimeStep = 10.  # Résolution azimutale
 rotationsKeptInWake = 10  # Longueur du sillage
 nearWakeLength = 360 * rotationsKeptInWake
@@ -67,7 +97,7 @@ steps_per_rotation = int(360. / DegreesPerTimeStep)
 
 # Extraction du rayon max pour calcul du TSR
 data_geom = np.genfromtxt('./geometry/mexico.blade', skip_header=1)
-R_max = 0.210 + np.max(data_geom[:,2]) 
+R_max = 0.210 + np.max(data_geom[:,2]) #2.25 m
 Omega = 44.5163679 
 
 # -----------------------------------------------------------------------------
