@@ -38,7 +38,8 @@ class Blade:
         self.gammaShed = np.zeros(len(nodes) - 1, dtype=np.float32)
         self.gammaTrail = np.zeros(len(nodes), dtype=np.float32)
         self.attackAngle = np.zeros(len(nodes) - 1, dtype=np.float32)
-
+        self.relax = 0.05
+        self.eta_prime = np.zeros(len(nodes) - 1, dtype=np.float32)
         self.bladeNodes = nodes
         self.trailingEdgeNode = np.zeros(np.shape(nodes), dtype=np.float32)
         self.centers = .5 * (nodes[1:] + nodes[:-1])
@@ -171,7 +172,9 @@ class Blade:
         blade-element theory and Kutta-Joukowski theorem.
         """
 
-        relax = 0.05
+        norm3D = np.linalg.norm(uEffectiveInElementRef, axis=1)
+        norm3D_safe = np.where(norm3D == 0, 1e-12, norm3D)
+        self.eta_prime = np.abs(uEffectiveInElementRef[:, 1]) / norm3D_safe
 
         # On utilise directement le vecteur uInfty dans le calcul de la vitesse effective
         uEffective = (uInfty - self.centersTranslationVelocity + nearWakeInducedVelocities + self.inductionsFromWake)
@@ -194,7 +197,7 @@ class Blade:
 
         newGamma = .5 * self.effectiveVelocity * self.centerChords * self.lift
         self.f_Gamma = np.copy(newGamma)
-        newGammaBounds = self.gammaBound + relax * (newGamma - self.gammaBound)
+        newGammaBounds = self.gammaBound + self.relax * (newGamma - self.gammaBound)
 
         idx = np.where(self.gammaBound == 0)
         newGammaBounds[idx] = newGamma[idx]
