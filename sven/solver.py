@@ -1,5 +1,7 @@
 import time
 from sven.inductions import *
+from sven.math_analyzer import MathAnalyzer
+analyzer = MathAnalyzer()
 
 def update(
     blades, uInfty, timeStep, timeSimulation, innerIter, 
@@ -38,6 +40,15 @@ def update(
     blade.gammaShed = np.zeros_like(blade.gammaShed)
     blade.gammaTrail = np.zeros_like(blade.gammaTrail)
    
+    ###########################################################################
+    # Lancement des analyses mathématiques en arrière-plan
+    ###########################################################################
+    # 1. Résolutions fantômes (Newton et Picard pur) et Jacobienne
+    analyzer.run_shadow_convergence(blades, uInfty, deltaFlts, max_iter=innerIter)
+    
+    # 2. Extraction du ratio eta' (la vitesse a été mise à jour par les itérations fantômes)
+    analyzer.extract_eta_prime(blades)
+    ###########################################################################
 
     ###########################################################################
     # Convergence loop over gammaBound
