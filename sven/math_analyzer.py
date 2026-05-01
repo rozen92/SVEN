@@ -3,10 +3,12 @@ from sven.inductions import nearWakeInduction
 
 class MathAnalyzer:
     def __init__(self):
+        self.active = False # Interrupteur pour ne pas analyser les 1ers tours
         self.reset()
 
     def reset(self):
         """Réinitialise les historiques pour relancer une nouvelle simulation"""
+        self.active = False
         self.eta_primes_history = []
         self.spectral_radii_K = []
         self.K_infinity_norms = []
@@ -15,24 +17,22 @@ class MathAnalyzer:
         self.picard_relax_residuals = []
         self.newton_residuals = []
         self.jacobian_eigenvalues_history = []
+        self.jacobian_condition_numbers = [] # NOUVEAU : Conditionnement
 
     def gather_gamma(self, blades):
-        """Concatène les circulations Gamma en un seul vecteur de taille 3n"""
         return np.concatenate([b.gammaBound for b in blades])
 
     def set_gamma(self, blades, gamma_array):
-        """Dispatche un vecteur global de taille 3n vers les pales respectives"""
         n_sec = len(blades[0].centers)
         for i, b in enumerate(blades):
             b.gammaBound = gamma_array[i * n_sec : (i + 1) * n_sec]
 
     def extract_eta_prime(self, blades):
-        """Enregistre le max du ratio eta' sur toutes les pales"""
+        if not self.active: return
         max_eta = np.max([np.max(b.eta_prime) for b in blades])
         self.eta_primes_history.append(max_eta)
 
     def get_F_matrix(self, blades, deltaFlts):
-        """Calcule la matrice géométrique F_l(P_k)."""
         n_blades = len(blades)
         n_sec = len(blades[0].centers)
         total_n = n_blades * n_sec
@@ -42,7 +42,6 @@ class MathAnalyzer:
         
         for l in range(total_n):
             b_idx, s_idx = divmod(l, n_sec)
-            
             for b in blades:
                 b.newGammaBound[:] = 0.
                 b.gammaShed[:] = 0.
@@ -66,9 +65,7 @@ class MathAnalyzer:
         return F_matrix
 
     def compute_jacobian_and_K(self, blades, deltaFlts):
-        """Calcule la Jacobienne exacte J (d_Gamma f) et la matrice de majoration K(0)."""
         F_glob = self.get_F_matrix(blades, deltaFlts)
-        
         n_blades = len(blades)
         n_sec = len(blades[0].centers)
         total_n = n_blades * n_sec
@@ -87,7 +84,6 @@ class MathAnalyzer:
             for s_idx in range(n_sec):
                 k = b_idx * n_sec + s_idx
                 c[k] = blade.centerChords[s_idx]
-                
                 V = blade.effectiveVelocity[s_idx]
                 alpha = blade.attackAngle[s_idx]
                 
@@ -112,7 +108,7 @@ class MathAnalyzer:
             
             for l in range(total_n):
                 F_l = R_k.T @ F_glob[k, l, :]
-                F_l[1] = 0.0 # Hypothèse 2D
+                F_l[1] = 0.0
                 
                 if norm_u > 1e-12:
                     term1 = CL[k] * np.dot(F_l, u_loc[k])
@@ -125,7 +121,8 @@ class MathAnalyzer:
         return J, K_matrix
 
     def run_shadow_convergence(self, blades, uInfty, deltaFlts, max_iter=20):
-        """Lance les itérations en arrière-plan et stocke les résidus & valeurs propres."""
+        if not self.active: return
+        
         orig_gamma = self.gather_gamma(blades)
         total_n = len(orig_gamma)
         relax_factor = blades[0].relax
@@ -193,13 +190,15 @@ class MathAnalyzer:
                 
         self.newton_residuals.append(newton_res)
         
-        # Enregistrement des propriétés matricielles au point initial (J et K)
+        # Enregistrement des propriétés matricielles au point initial
         J_initial, K_initial = self.compute_jacobian_and_K(blades, deltaFlts)
         self.spectral_radii_K.append(np.max(np.abs(np.linalg.eigvals(K_initial))))
         self.K_infinity_norms.append(np.linalg.norm(K_initial, ord=np.inf))
-        
-        # Ajout des valeurs propres de la Jacobienne
         self.jacobian_eigenvalues_history.append(np.linalg.eigvals(J_initial))
+        
+        # Conditionnement de (I - J)
+        A_initial = np.eye(total_n) - J_initial
+        self.jacobian_condition_numbers.append(np.linalg.cond(A_initial))
 
         # Restauration
         self.set_gamma(blades, orig_gamma)
