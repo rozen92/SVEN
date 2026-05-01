@@ -47,7 +47,7 @@ class Airfoil:
         """
         return interp_checked(self.AOAs, self.Drags, aoa)
 
-def getLiftDerivative(self, aoa, d_aoa=1e-5):
+    def getLiftDerivative(self, aoa, d_aoa=1e-5):
         """
         Returns the derivative of the lift coefficient with respect to the 
         angle of attack (in rad) using a central finite difference scheme.

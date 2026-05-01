@@ -172,21 +172,26 @@ class Blade:
         blade-element theory and Kutta-Joukowski theorem.
         """
 
-        norm3D = np.linalg.norm(uEffectiveInElementRef, axis=1)
-        norm3D_safe = np.where(norm3D == 0, 1e-12, norm3D)
-        self.eta_prime = np.abs(uEffectiveInElementRef[:, 1]) / norm3D_safe
-
         # On utilise directement le vecteur uInfty dans le calcul de la vitesse effective
         uEffective = (uInfty - self.centersTranslationVelocity + nearWakeInducedVelocities + self.inductionsFromWake)
 
         r = R.from_matrix(self.centersOrientationMatrix)
+        
+  
         uEffectiveInElementRef = r.apply(uEffective, inverse=True)
+
+
+        # uEffectiveInElementRef[:, 1] correspond à la vitesse transverse (envergure)
+        norm3D = np.linalg.norm(uEffectiveInElementRef, axis=1)
+        
+        norm3D_safe = np.where(norm3D == 0, 1e-12, norm3D)
+        self.eta_prime = np.abs(uEffectiveInElementRef[:, 1]) / norm3D_safe
+        # -----------------------------------------------------
 
         # 2D assumption
         uEffectiveInElementRef[:, 1] = 0.
         self.attackAngle = np.arctan2(
             uEffectiveInElementRef[:, 2], uEffectiveInElementRef[:, 0])
-
 
         for i in range(len(self.centers)):
             self.lift[i] = self.airfoils[i].getLift(self.attackAngle[i])
@@ -194,9 +199,10 @@ class Blade:
 
         self.effectiveVelocity = np.linalg.norm(uEffectiveInElementRef, axis=1)
 
-
         newGamma = .5 * self.effectiveVelocity * self.centerChords * self.lift
         self.f_Gamma = np.copy(newGamma)
+        
+
         newGammaBounds = self.gammaBound + self.relax * (newGamma - self.gammaBound)
 
         idx = np.where(self.gammaBound == 0)
