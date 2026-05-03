@@ -77,7 +77,7 @@ total_steps = int((nRotations * 360.) / DegreesPerTimeStep)
 scenarios = [
     {"name": "Picard_eta0.05", "algo": "picard", "eta": 0.05},
     {"name": "Picard_eta0.30", "algo": "picard", "eta": 0.30},
-    {"name": "Newton",         "algo": "newton", "eta": 1.00} # eta ignoré par Newton
+    {"name": "Newton",         "algo": "newton", "eta": 1.00}
 ]
 
 print(f"=== COMPARAISON DES PERFORMANCES DES SOLVEURS ===")
@@ -86,7 +86,6 @@ print(f"Configuration : n={n_sections}, TSR={tsr_val}, Yaw={yaw_val}°, {total_s
 for sc in scenarios:
     print(f"Lancement de la simulation : {sc['name']}")
     
-    # On désactive l'analyse mathématique fantôme pour mesurer la vraie vitesse
     analyzer.active = False 
     
     Blades, WindTurbine = NewMexicoWindTurbine(uInfty, density, nearWakeLength, n_sections)
@@ -107,21 +106,17 @@ for sc in scenarios:
         WindTurbine.updateTurbine(refAzimuth)
         timeSim += timeStep
         
-        # Le solveur renvoie maintenant l'erreur max et son propre temps d'exécution
-        max_err, solver_t = update(
+        # AJOUT ICI : récupération de iters_taken
+        max_err, solver_t, iters_taken = update(
             Blades, uInfty, timeStep, timeSim, innerIter, 
             0.01, global_start, [], 
             algo_type=sc['algo'], tol=tol_point_fixe
         )
         
-        # Évaluation des efforts
         Fn, Ft = WindTurbine.evaluateForces(density)
-        
-        # Extraction de la pale 0 pour le profil de la pale
         Veff = WindTurbine.blades[0].effectiveVelocity
         Alpha = WindTurbine.blades[0].attackAngle
         
-        # Erreur de point fixe propre à chaque section de la pale 0
         err_sections = np.abs(WindTurbine.blades[0].f_Gamma - WindTurbine.blades[0].gammaBound)
         
         for ir, r_val in enumerate(centersRadius):
@@ -129,8 +124,9 @@ for sc in scenarios:
                 'Time_Step': it + 1,
                 'Time_s': timeSim,
                 'Radius': r_val,
-                'Solver_Time_s': solver_t,      # Temps pris par le solveur à ce pas
-                'Max_Global_Err': max_err,      # Erreur max toutes pales confondues
+                'Solver_Time_s': solver_t,      
+                'Iterations': iters_taken,      
+                'Max_Global_Err': max_err,      
                 'Section_PF_Err': err_sections[ir],
                 'Fn': Fn[ir],
                 'Ft': Ft[ir],
@@ -141,7 +137,6 @@ for sc in scenarios:
         if (it + 1) % 50 == 0:
             print(f"  Pas {it+1}/{total_steps} achevé.")
 
-    # Sauvegarde
     df = pd.DataFrame(results)
     save_path = os.path.join(outDir, f"perf_{sc['name']}.csv")
     df.to_csv(save_path, index=False)
