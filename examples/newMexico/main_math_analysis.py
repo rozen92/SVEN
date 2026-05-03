@@ -61,18 +61,16 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength, n_sections):
 # -----------------------------------------------------------------------------
 # Paramètres de simulation MODIFIÉS
 # -----------------------------------------------------------------------------
-nRotations = 5.0          # 5 tours
+nRotations = 5.0          
 DegreesPerTimeStep = 10.  
-rotationsKeptInWake = 5   # On garde tout le sillage des 5 tours
+rotationsKeptInWake = 5   
 nearWakeLength = 360 * rotationsKeptInWake
-innerIter = 20            # Itérations de point fixe passent à 20
+innerIter = 20            
 density = 1.191           
 total_steps = int((nRotations * 360.) / DegreesPerTimeStep)
 steps_per_rotation = int(360. / DegreesPerTimeStep)
 
-# Le début de l'analyse est au 3ème tour (on saute 2 tours complets)
 start_analysis_step = 2 * steps_per_rotation 
-num_analyzed_steps = total_steps - start_analysis_step
 
 Omega = 44.5163679 
 R_max = 2.46 
@@ -83,6 +81,8 @@ V_mag = (Omega * R_max) / tsr_val
 uInfty = np.array([V_mag * np.cos(yaw_rad), V_mag * np.sin(yaw_rad), 0.0], dtype=np.float32)
 
 resolutions_n = [5, 10, 20, 40]
+# Dictionnaire adaptatif pour eta_relax en fonction de la résolution
+eta_relax_dict = {5: 1.0, 10: 0.85, 20: 0.55, 40: 0.30}
 
 print(f"--- DÉMARRAGE DES ÉTUDES DE SENSIBILITÉ ---")
 global_start = time.time()
@@ -94,10 +94,18 @@ for n in resolutions_n:
     
     analyzer.reset()
     Blades, WindTurbine, _, _, deltaFlts, _ = NewMexicoWindTurbine(uInfty, density, nearWakeLength, n)
+    
+    # Application du facteur de relaxation adapté à n
+    current_eta = eta_relax_dict.get(n, 0.05)
+    for b in Blades:
+        b.relax = current_eta
+    print(f" -> Facteur de relaxation appliqué : {current_eta}")
 
     timeStep = np.radians(DegreesPerTimeStep) / WindTurbine.rotationalVelocity
     refAzimuth = -WindTurbine.rotationalVelocity * timeStep
     timeSim = 0.
+    
+    analyzed_time_steps = [] # Liste pour garder trace précise des pas enregistrés
     
     for it in range(total_steps):
         step_start = time.time()
@@ -106,19 +114,23 @@ for n in resolutions_n:
         WindTurbine.updateTurbine(refAzimuth)
         timeSim += timeStep
         
-        # Activation de l'analyseur uniquement à partir du 3ème tour
-        analyzer.active = (it >= start_analysis_step)
+        # Activation au tout 1er pas (it=0) ET après le 2ème tour
+        analyzer.active = (it == 0) or (it >= start_analysis_step)
         
         update(Blades, uInfty, timeStep, timeSim, innerIter, deltaFlts, global_start, [])
-        if it % 5 == 0 or it >= start_analysis_step:
+        
+        if analyzer.active:
+            analyzed_time_steps.append(it + 1)
+            
+        if it % 5 == 0 or analyzer.active:
             print(f"  Pas {it+1}/{total_steps} achevé en {time.time() - step_start:.1f} s {'(Analyse Math en cours)' if analyzer.active else ''}")
 
     # -------------------------------------------------------------------------
-    # Extractions (en tenant compte de l'offset du 3ème tour)
+    # Extractions 
     # -------------------------------------------------------------------------
     # A. Métriques globales
     df_metrics = pd.DataFrame({
-        'Time_Step': range(start_analysis_step + 1, total_steps + 1),
+        'Time_Step': analyzed_time_steps,
         'Max_Eta_Prime': analyzer.eta_primes_history,
         'K_Spectral_Radius': analyzer.spectral_radii_K,
         'K_Infinity_Norm': analyzer.K_infinity_norms,
@@ -126,15 +138,15 @@ for n in resolutions_n:
         'K_Prime_Sol_Spectral_Radius': analyzer.spectral_radii_K_prime_sol,   
         'Empirical_Lipschitz_Pur': analyzer.lipschitz_empirical,
         'Empirical_Lipschitz_Relax': analyzer.lipschitz_empirical_relax,      
-        'Condition_Number': analyzer.jacobian_condition_numbers,
+        'Condition_Number_Init': analyzer.jacobian_condition_numbers_init,
+        'Condition_Number_Sol': analyzer.jacobian_condition_numbers_sol,
         'FD_Verification_Error': analyzer.fd_verification_errors              
     })
     df_metrics.to_excel(os.path.join(outDir, f'math_metrics_n{n}.xlsx'), index=False)
 
     # B. Résidus complets
     all_residuals = []
-    for i in range(num_analyzed_steps):
-        t_idx_real = start_analysis_step + i + 1
+    for i, t_idx_real in enumerate(analyzed_time_steps):
         for iter_idx in range(innerIter):
             res_pic = analyzer.picard_residuals[i][iter_idx] if iter_idx < len(analyzer.picard_residuals[i]) else np.nan
             res_relax = analyzer.picard_relax_residuals[i][iter_idx] if iter_idx < len(analyzer.picard_relax_residuals[i]) else np.nan
@@ -151,9 +163,7 @@ for n in resolutions_n:
 
     # C. Valeurs propres (f non relaxée, évaluées en Init et Sol)
     all_eigvals = []
-    for i in range(num_analyzed_steps):
-        t_idx_real = start_analysis_step + i + 1
-        
+    for i, t_idx_real in enumerate(analyzed_time_steps):
         # VP Initiales
         eigs_init = analyzer.jacobian_eigenvalues_init[i]
         for e in eigs_init:

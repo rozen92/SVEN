@@ -26,10 +26,11 @@ class MathAnalyzer:
         self.picard_relax_residuals = []
         self.newton_residuals = []
         
-        # Valeurs propres de la Jacobienne J (non relaxée)
+        # Valeurs propres et conditionnements
         self.jacobian_eigenvalues_init = []   
         self.jacobian_eigenvalues_sol = []    
-        self.jacobian_condition_numbers = [] 
+        self.jacobian_condition_numbers_init = [] # Renommé pour clarté
+        self.jacobian_condition_numbers_sol = []  # NOUVEAU
         
         # Erreur de validation de la Jacobienne par Différences Finies
         self.fd_verification_errors = []
@@ -144,8 +145,8 @@ class MathAnalyzer:
                 
         return J, K_matrix, K_prime_matrix
 
-    def verify_jacobian_fd(self, evaluate_func, current_gamma, J_analytic, epsilon=1e-5):
-        """Vérifie la Jacobienne via Différences Finies sur une direction aléatoire"""
+    def verify_jacobian_fd(self, evaluate_func, current_gamma, J_analytic, epsilon=1e-3):
+        """Vérifie la Jacobienne via Différences Finies sur une direction aléatoire (adapté float32)"""
         d = np.random.randn(len(current_gamma))
         d = d / np.linalg.norm(d) 
         
@@ -209,7 +210,7 @@ class MathAnalyzer:
         self.picard_relax_residuals.append(relax_res)
         self.lipschitz_empirical_relax.append(np.max(L_empirics_relax) if L_empirics_relax else 0.0)
 
-        # 3. Newton
+        # 3. Newton (Tolérance modifiée à 1e-10)
         gamma_newton = orig_gamma.copy()
         newton_res = []
         for _ in range(max_iter):
@@ -217,7 +218,7 @@ class MathAnalyzer:
             res = np.linalg.norm(f_g - gamma_newton)
             newton_res.append(res)
             
-            if res < 1e-6 or np.isnan(res) or np.isinf(res):
+            if res < 1e-10 or np.isnan(res) or np.isinf(res):
                 break
                 
             J, _, _ = self.compute_jacobian_and_K(blades, deltaFlts)
@@ -238,7 +239,7 @@ class MathAnalyzer:
         self.K_infinity_norms.append(np.linalg.norm(K_init, ord=np.inf))
         self.spectral_radii_K_prime_init.append(np.max(np.abs(np.linalg.eigvals(K_prime_init))))
         self.jacobian_eigenvalues_init.append(np.linalg.eigvals(J_init))
-        self.jacobian_condition_numbers.append(np.linalg.cond(np.eye(total_n) - J_init))
+        self.jacobian_condition_numbers_init.append(np.linalg.cond(np.eye(total_n) - J_init))
         
         # Validation par différences finies (sur Gamma_init avec la vraie Jacobienne J_init)
         fd_err = self.verify_jacobian_fd(evaluate_f, orig_gamma, J_init)
@@ -250,6 +251,7 @@ class MathAnalyzer:
         
         self.spectral_radii_K_prime_sol.append(np.max(np.abs(np.linalg.eigvals(K_prime_sol))))
         self.jacobian_eigenvalues_sol.append(np.linalg.eigvals(J_sol))
+        self.jacobian_condition_numbers_sol.append(np.linalg.cond(np.eye(total_n) - J_sol)) # NOUVEAU
 
         # Restauration finale avant de rendre la main au solveur
         self.set_gamma(blades, orig_gamma)
