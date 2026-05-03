@@ -1,134 +1,135 @@
 import time
+import numpy as np
 from sven.inductions import *
 from sven.math_analyzer import MathAnalyzer
 analyzer = MathAnalyzer()
 
 def update(
     blades, uInfty, timeStep, timeSimulation, innerIter, 
-    deltaFlts, startTime, iterationVect):
+    deltaFlts, startTime, iterationVect, algo_type="picard", tol=0.0):
 
     iterationTime = time.time()
     
-    ###########################################################################
-    # Initialize all inductions
-    ###########################################################################
+    # 1. Initialize all inductions
     for (iBlade, blade) in enumerate(blades):
         blade.inductionsFromWake[:, :] = 0.
         blade.inductionsAtNodes[:, :] = 0.
         blade.wakeNodesInductions[:, :, :] = 0.
 
-    ###########################################################################
-    # Calculates the attachment point of the very first filament row (or 
-    # trailing edge position)
-    ###########################################################################
+    # 2. Update first wake row
     for blade in blades:
         blade.updateFirstWakeRow()
         nearWakeLength = blade.nearWakeLength
 
-    ###########################################################################
-    # "wakeFilamentsInductionsOnBladeOrWake" : compute the filaments' 
-    #                                          induction on blade centers
-    ###########################################################################
-    t0 = time.time()
+    # 3. Inductions on blade
     if (nearWakeLength > 2):
         wakeFilamentsInductionsOnBladeOrWake(blades, deltaFlts, "blade")
 
-
-    ###########################################################################
-    # These have to be set back to zero before gamma bound convergence loop
-    ###########################################################################
+    # 4. Reset for convergence loop
     blade.gammaShed = np.zeros_like(blade.gammaShed)
     blade.gammaTrail = np.zeros_like(blade.gammaTrail)
    
-    ###########################################################################
-    # Lancement des analyses mathématiques en arrière-plan
-    ###########################################################################
-    # 1. Résolutions fantômes (Newton et Picard pur) et Jacobienne
-    analyzer.run_shadow_convergence(blades, uInfty, deltaFlts, max_iter=innerIter)
-    
-    # 2. Extraction du ratio eta' (la vitesse a été mise à jour par les itérations fantômes)
-    analyzer.extract_eta_prime(blades)
-    ###########################################################################
+    # 5. Analyses mathématiques en arrière-plan (si actif)
+    if analyzer.active:
+        analyzer.run_shadow_convergence(blades, uInfty, deltaFlts, max_iter=innerIter)
+        analyzer.extract_eta_prime(blades)
 
-    ###########################################################################
-    # Convergence loop over gammaBound
-    ###########################################################################
+    # =========================================================================
+    # BOUCLE DE CONVERGENCE (Intégration de Newton et du Break)
+    # =========================================================================
+    t_solver_start = time.time()
+    bladesGammaBounds = [0.] * len(blades)
+    max_err = 0.0
 
-    bladesGammaBounds = []
-    for i in range(len(blades)):
-        bladesGammaBounds.append(0.)
-    for i in range(innerIter):
-        tb0 = time.time()
-        #######################################################################
-        #(1) "nearWakeInduction" : calculates induced velocities of bound 
-        #                           filaments from one blade on another
-        #(2) "estimateGammaBound": knowing all induced velocities on the 
-        #                           blade -> calculate the blade's effective 
-        #                           velocity, angle of attack, lift coefficient 
-        #                           -> determine new bound circulation value.
-        #(3) "updateSheds/updateTrails" : knowing new bound circulation -> shed 
-        #                                 and trail circulations can be
-        #                                 compute from Kelvin's theorem.
-        #######################################################################
-        nearWakeInducedVelocities = nearWakeInduction(blades, deltaFlts)
+    if algo_type == "picard":
+        for i in range(innerIter):
+            nearWakeInducedVelocities = nearWakeInduction(blades, deltaFlts)
+            max_err = 0.0
+            
+            iBlade = 0
+            for (blade, ind) in zip(blades, nearWakeInducedVelocities):
+                old_g = blade.gammaBound.copy()
+                bladesGammaBounds[iBlade] = blade.estimateGammaBound(uInfty, ind)
+                
+                # Erreur mathématique stricte : |f(Gamma) - Gamma|
+                err = np.max(np.abs(blade.f_Gamma - old_g))
+                max_err = max(max_err, err)
 
-        iBlade = 0
-        for (blade, bladeInducedVelocities) in zip(blades, nearWakeInducedVelocities):
-            bladesGammaBounds[iBlade] = blade.estimateGammaBound(uInfty, bladeInducedVelocities)
-            blade.updateSheds(bladesGammaBounds[iBlade])
-            blade.updateTrails(bladesGammaBounds[iBlade])
+                blade.updateSheds(bladesGammaBounds[iBlade])
+                blade.updateTrails(bladesGammaBounds[iBlade])
+                blade.gammaBound = bladesGammaBounds[iBlade]
+                iBlade += 1
+                
+            if tol > 0 and max_err < tol:
+                break
 
-            blade.gammaBound = bladesGammaBounds[iBlade]
-            iBlade += 1
+    elif algo_type == "newton":
+        total_n = sum(len(b.centers) for b in blades)
+        for i in range(innerIter):
+            nearWakeInducedVelocities = nearWakeInduction(blades, deltaFlts)
+            f_g_list = []
+            current_g_list = []
+            
+            for blade, ind in zip(blades, nearWakeInducedVelocities):
+                old_g = blade.gammaBound.copy()
+                # Appel pour évaluer f_Gamma sans écraser l'état actuel
+                blade.estimateGammaBound(uInfty, ind)
+                blade.gammaBound = old_g 
+                blade.newGammaBound = old_g 
+                
+                f_g_list.append(blade.f_Gamma)
+                current_g_list.append(old_g)
+                
+            F_G = np.concatenate(f_g_list)
+            Gamma = np.concatenate(current_g_list)
+            
+            # Vérification du break
+            err_vector = F_G - Gamma
+            max_err = np.max(np.abs(err_vector))
+            if tol > 0 and max_err < tol:
+                break
+                
+            # Étape de Newton
+            J, _, _ = analyzer.compute_jacobian_and_K(blades, deltaFlts)
+            A = np.eye(total_n) - J
+            try:
+                dGamma = np.linalg.solve(A, err_vector)
+                new_Gamma = Gamma + dGamma
+            except np.linalg.LinAlgError:
+                new_Gamma = F_G # Sécurité si J est singulière
+                
+            # Distribution du nouveau vecteur d'état
+            idx = 0
+            for ib, blade in enumerate(blades):
+                n_sec = len(blade.centers)
+                new_g = new_Gamma[idx : idx+n_sec]
+                
+                blade.gammaBound = new_g
+                blade.newGammaBound = new_g.copy() # Synchronisation requise
+                blade.updateSheds(new_g)
+                blade.updateTrails(new_g)
+                bladesGammaBounds[ib] = new_g
+                idx += n_sec
 
-    ###########################################################################
-    # Store bound circulation value after convergence: important for next tstep
-    ###########################################################################
+    solver_time = time.time() - t_solver_start
+    # =========================================================================
+
     for (iBlade, blade) in enumerate(blades):
         blade.storeOldGammaBound(bladesGammaBounds[iBlade])
 
-
-    ###########################################################################
-    # Compute all inductions on wake elements : 
-    #(1)"wakeFilamentsInductionsOnBladeOrWake" : inductions from wake filaments 
-    #                                            on all other wake filaments
-    #(2)"bladeInductionsOnWake"                : inductions from blades on 
-    #                                            wake filaments
-    ###########################################################################
-    t0 = time.time()
+    # 6. Inductions on wake
     if (nearWakeLength > 2):
         wakeFilamentsInductionsOnBladeOrWake(blades, deltaFlts, "wake")
 
-
     bladeInductionsOnWake(blades, deltaFlts)
     
-
-    ###########################################################################
-    # Once all inductions are known, the induced wake velocity is used to 
-    # advect vortex filaments in the wake.
-    ###########################################################################
-
+    # 7. Advection and Splicing
     if (nearWakeLength > 2):
         for blade in blades:
             blade.advectFilaments(uInfty, timeStep)
-   
-
-    ###########################################################################
-    #(1)"spliceNearWake"            : trail and shed filaments from the 
-    #                                 second to last row take values of sheds
-    #                                 and trails from first to second to last 
-    #                                 row.
-    #(2)"updateFilamentCirculation" : first row of filaments take trail and shed 
-    #                                 circulations values computed after 
-    #                                 gammaBound convergence loop.
-    ###########################################################################
-
-    if (nearWakeLength > 2):
-        for blade in blades:
             blade.spliceNearWake()
             blade.updateFilamentCirulations()
 
     iterationVect.append([time.time() - iterationTime, time.time()-startTime])
 
-    return
-
+    return max_err, solver_time
