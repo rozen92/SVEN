@@ -122,8 +122,12 @@ for n in resolutions_n:
         'Max_Eta_Prime': analyzer.eta_primes_history,
         'K_Spectral_Radius': analyzer.spectral_radii_K,
         'K_Infinity_Norm': analyzer.K_infinity_norms,
-        'Empirical_Lipschitz': analyzer.lipschitz_empirical,
-        'Condition_Number': analyzer.jacobian_condition_numbers # NOUVEAU
+        'K_Prime_Init_Spectral_Radius': analyzer.spectral_radii_K_prime_init, 
+        'K_Prime_Sol_Spectral_Radius': analyzer.spectral_radii_K_prime_sol,   
+        'Empirical_Lipschitz_Pur': analyzer.lipschitz_empirical,
+        'Empirical_Lipschitz_Relax': analyzer.lipschitz_empirical_relax,      
+        'Condition_Number': analyzer.jacobian_condition_numbers,
+        'FD_Verification_Error': analyzer.fd_verification_errors              
     })
     df_metrics.to_excel(os.path.join(outDir, f'math_metrics_n{n}.xlsx'), index=False)
 
@@ -145,17 +149,31 @@ for n in resolutions_n:
             })
     pd.DataFrame(all_residuals).to_csv(os.path.join(outDir, f'residuals_all_steps_n{n}.csv'), index=False)
 
-    # C. Valeurs propres
+    # C. Valeurs propres (f non relaxée, évaluées en Init et Sol)
     all_eigvals = []
     for i in range(num_analyzed_steps):
         t_idx_real = start_analysis_step + i + 1
-        eigs = analyzer.jacobian_eigenvalues_history[i]
-        for e in eigs:
+        
+        # VP Initiales
+        eigs_init = analyzer.jacobian_eigenvalues_init[i]
+        for e in eigs_init:
             all_eigvals.append({
                 'Time_Step': t_idx_real,
+                'State': 'Init',
                 'Real': np.real(e),
                 'Imag': np.imag(e)
             })
+            
+        # VP Solution
+        eigs_sol = analyzer.jacobian_eigenvalues_sol[i]
+        for e in eigs_sol:
+            all_eigvals.append({
+                'Time_Step': t_idx_real,
+                'State': 'Sol',
+                'Real': np.real(e),
+                'Imag': np.imag(e)
+            })
+            
     pd.DataFrame(all_eigvals).to_csv(os.path.join(outDir, f'eigenvalues_all_steps_n{n}.csv'), index=False)
 
     print(f"-> Fichiers exportés pour n={n}.")
