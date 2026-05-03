@@ -40,9 +40,11 @@ def update(
     t_solver_start = time.time()
     bladesGammaBounds = [0.] * len(blades)
     max_err = 0.0
+    iters_taken = innerIter # Par défaut, on suppose qu'on fait toutes les itérations
 
     if algo_type == "picard":
         for i in range(innerIter):
+            iters_taken = i + 1 # Mise à jour du nombre d'itérations réelles
             nearWakeInducedVelocities = nearWakeInduction(blades, deltaFlts)
             max_err = 0.0
             
@@ -51,7 +53,6 @@ def update(
                 old_g = blade.gammaBound.copy()
                 bladesGammaBounds[iBlade] = blade.estimateGammaBound(uInfty, ind)
                 
-                # Erreur mathématique stricte : |f(Gamma) - Gamma|
                 err = np.max(np.abs(blade.f_Gamma - old_g))
                 max_err = max(max_err, err)
 
@@ -66,13 +67,13 @@ def update(
     elif algo_type == "newton":
         total_n = sum(len(b.centers) for b in blades)
         for i in range(innerIter):
+            iters_taken = i + 1 # Mise à jour du nombre d'itérations réelles
             nearWakeInducedVelocities = nearWakeInduction(blades, deltaFlts)
             f_g_list = []
             current_g_list = []
             
             for blade, ind in zip(blades, nearWakeInducedVelocities):
                 old_g = blade.gammaBound.copy()
-                # Appel pour évaluer f_Gamma sans écraser l'état actuel
                 blade.estimateGammaBound(uInfty, ind)
                 blade.gammaBound = old_g 
                 blade.newGammaBound = old_g 
@@ -83,29 +84,26 @@ def update(
             F_G = np.concatenate(f_g_list)
             Gamma = np.concatenate(current_g_list)
             
-            # Vérification du break
             err_vector = F_G - Gamma
             max_err = np.max(np.abs(err_vector))
             if tol > 0 and max_err < tol:
                 break
                 
-            # Étape de Newton
-            J, _, _ = analyzer.compute_jacobian_and_K(blades, deltaFlts)
+            J, _, _ = analyzer.compute_jacobian_and_K(blades, deltaFlts, compute_K=False)
             A = np.eye(total_n) - J
             try:
                 dGamma = np.linalg.solve(A, err_vector)
                 new_Gamma = Gamma + dGamma
             except np.linalg.LinAlgError:
-                new_Gamma = F_G # Sécurité si J est singulière
+                new_Gamma = F_G 
                 
-            # Distribution du nouveau vecteur d'état
             idx = 0
             for ib, blade in enumerate(blades):
                 n_sec = len(blade.centers)
                 new_g = new_Gamma[idx : idx+n_sec]
                 
                 blade.gammaBound = new_g
-                blade.newGammaBound = new_g.copy() # Synchronisation requise
+                blade.newGammaBound = new_g.copy()
                 blade.updateSheds(new_g)
                 blade.updateTrails(new_g)
                 bladesGammaBounds[ib] = new_g
@@ -132,4 +130,5 @@ def update(
 
     iterationVect.append([time.time() - iterationTime, time.time()-startTime])
 
-    return max_err, solver_time
+  
+    return max_err, solver_time, iters_taken
