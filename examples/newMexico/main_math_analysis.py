@@ -140,7 +140,7 @@ for n in resolutions_n:
         file_suffix = f"n{n}_eta{current_eta}"
         print(f" -> Exportation des résultats pour {file_suffix}...")
 
-        # 1. Métriques globales (Conditionnement, Bornes K, FD error)
+        # 1. Métriques globales (Conditionnement, Bornes K, FD error, Symétrie, Diagonale Dominante)
         df_metrics = pd.DataFrame({
             'Time_Step': analyzed_time_steps,
             'Max_Eta_Prime': analyzer.eta_primes_history,
@@ -152,9 +152,25 @@ for n in resolutions_n:
             'Empirical_Lipschitz_Relax': analyzer.lipschitz_empirical_relax,      
             'Condition_Number_Init': analyzer.jacobian_condition_numbers_init,
             'Condition_Number_Sol': analyzer.jacobian_condition_numbers_sol,
-            'FD_Verification_Error': analyzer.fd_verification_errors              
+            'FD_Verification_Error': analyzer.fd_verification_errors,
+            'J_Symmetry_Error_Init': analyzer.jacobian_symmetry_errors_init,
+            'J_Symmetry_Error_Sol': analyzer.jacobian_symmetry_errors_sol,
+            'J_Diag_Dominant_Init': analyzer.J_diag_dominant_init,
+            'J_Diag_Dominant_Sol': analyzer.J_diag_dominant_sol
         })
         df_metrics.to_excel(os.path.join(outDir, f'math_metrics_{file_suffix}.xlsx'), index=False)
+
+        # 1.bis. Historique de dCL_dalpha
+        all_dCL = []
+        for i, t_idx_real in enumerate(analyzed_time_steps):
+            dCL_array = analyzer.dCL_dalpha_history[i]
+            for sec_idx, val in enumerate(dCL_array):
+                all_dCL.append({
+                    'Time_Step': t_idx_real,
+                    'Section_Index': sec_idx,
+                    'dCL_dalpha': val
+                })
+        pd.DataFrame(all_dCL).to_csv(os.path.join(outDir, f'dCL_dalpha_history_{file_suffix}.csv'), index=False)
 
         # 2. Résidus détaillés par itération interne
         all_residuals = []

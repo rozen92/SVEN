@@ -25,9 +25,10 @@ def update(
     if (nearWakeLength > 2):
         wakeFilamentsInductionsOnBladeOrWake(blades, deltaFlts, "blade")
 
-    # 4. Reset for convergence loop
-    blade.gammaShed = np.zeros_like(blade.gammaShed)
-    blade.gammaTrail = np.zeros_like(blade.gammaTrail)
+    # 4. Initialize for convergence loop
+    for blade in blades:
+        blade.updateSheds(blade.gammaBound)
+        blade.updateTrails(blade.gammaBound)
    
     # 5. Analyses mathématiques en arrière-plan (si actif)
     if analyzer.active:
