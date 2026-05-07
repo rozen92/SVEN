@@ -93,7 +93,8 @@ steps_per_rotation = int(360. / DegreesPerTimeStep)
 Omega = 44.5163679 
 R_max = 2.25 # Envergure totale (span)
 
-# Paramétrage de la méthode Hybride (Picard -> Newton)
+# Paramétrage de la méthode Hybride (Newton -> Picard -> Newton)
+quarter_rotation_steps = int(90. / DegreesPerTimeStep)
 warmup_rotations = 5
 warmup_steps = warmup_rotations * steps_per_rotation
 
@@ -104,7 +105,7 @@ tsrs = np.array([4, 8, 12])
 global_dataset = []
 global_start_time = time.time()
 
-print(f"Lancement de la campagne Hybride (Picard {warmup_rotations} tours -> Newton)")
+print(f"Lancement de la campagne Hybride (Newton 90° -> Picard jusqu'à {warmup_rotations} tours -> Newton)")
 
 for yaw_val in yaws_deg:
     yaw_rad = np.radians(yaw_val)
@@ -143,28 +144,33 @@ for yaw_val in yaws_deg:
             timeSim += timeStep
             
             # =================================================================
-            # STRATÉGIE HYBRIDE : Picard puis Newton
+            # STRATÉGIE HYBRIDE 3 PHASES
             # =================================================================
-            if it < warmup_steps:
+            if it < quarter_rotation_steps:
+                # Phase 1: Newton pour le premier quart de tour (absorbe le démarrage)
+                current_algo = "newton"
+                current_tol = tol_newton
+            elif it < warmup_steps:
+                # Phase 2: Picard pour lisser la convection jusqu'au 5ème tour
                 current_algo = "picard"
-                current_tol = 1e-3  # Tolérance relâchée pour le transitoire
-                # On force la relaxation à 0.3 sur toutes les pales
+                current_tol = 1e-3
                 for b in Blades:
                     b.relax = 0.3
             else:
+                # Phase 3: Newton pour le régime établi
                 current_algo = "newton"
-                current_tol = tol_newton  # 1e-5 (Précision forte pour le régime établi)
+                current_tol = tol_newton
             # =================================================================
 
-            # Appel du solveur (sans besoin de changer l'en-tête de update)
+            # Appel du solveur
             max_err, solver_time, iters_taken = update(
                 Blades, uInfty, timeStep, timeSim, innerIter, 
                 deltaFlts, global_start_time, [], 
                 algo_type=current_algo, tol=current_tol
             )
             
-            # Avertissement si le solveur courant n'atteint pas sa tolérance
-            if max_err > current_tol:
+            # Avertissement UNIQUEMENT après la phase transitoire (à partir du 5ème tour)
+            if max_err > current_tol and it >= warmup_steps:
                 print(f"  [Avertissement] Pas {it+1} ({current_algo}): Tolérance non atteinte (Erreur = {max_err:.2e})")
 
             # Récupération des données du pas de temps courant
@@ -182,8 +188,8 @@ for yaw_val in yaws_deg:
                     Veff_history[t_idx, a_idx, :] = Veff
                     Alpha_history[t_idx, a_idx, :] = Alpha
             
-            # Affichage périodique (On ajoute le nom de l'algorithme)
-            if (it + 1) % 50 == 0: 
+            # Affichage périodique tous les 30 pas
+            if (it + 1) % 30 == 0: 
                 print(f" Pas {it+1}/{total_steps} | {current_algo.capitalize()}: {iters_taken} iters | Err: {max_err:.2e}")
 
         # ---------------------------------------------------------
