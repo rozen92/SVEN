@@ -24,63 +24,31 @@ if not os.path.exists(outDir):
     os.makedirs(outDir)
 
 # -----------------------------------------------------------------------------
-<<<<<<< HEAD
-# Fonction de création de la turbine Mexico 
+# Fonction de création de la turbine Mexico
 # -----------------------------------------------------------------------------
 def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     sign = -1.
     hubRadius = 0.210  
-=======
-# Fonction de création de la turbine Mexico (Géométrie Exacte et Dénormalisée)
-# -----------------------------------------------------------------------------
-def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
-    sign = -1.
-    hubRadius = 0.210  # Rayon du moyeu (utilisé comme point de départ n0)
-    totalSpan = 2.25   # Envergure totale pour la dénormalisation
->>>>>>> 8b29edc0e2ea61259c8181881c3ffec4bb466716
     nBlades = 3
     rotationalVelocity = 44.5163679  
     bladePitch = sign * 0.040143
     
-<<<<<<< HEAD
     # 1. Charger les données géométriques
     geom_file = os.path.join(script_dir, 'geometry', 'blade.dat')
     data = np.genfromtxt(geom_file, skip_header=1, dtype=str)
     
-
     r_targets = data[:, 0].astype(float) 
     twist_targets = data[:, 1].astype(float)
     chord_targets = np.abs(data[:, 2].astype(float)) 
-=======
-    # 1. Charger les données géométriques (blade.dat)
-    # Colonnes : radius (normalisé), twist, chord, airfoil
-    geom_file = './geometry/blade.dat'
-    data = np.genfromtxt(geom_file, skip_header=1, dtype=str)
-    
-    # Dénormalisation des rayons par l'envergure totale (2.25m)
-    # Note : Le hubRadius (0.21m) est déjà inclus dans ces valeurs dénormalisées.
-    r_targets = data[:, 0].astype(float) * totalSpan 
-    twist_targets = data[:, 1].astype(float)
-    chord_targets = np.abs(data[:, 2].astype(float)) # On assure des cordes positives
->>>>>>> 8b29edc0e2ea61259c8181881c3ffec4bb466716
     airfoil_names = data[:, 3]
     
     N = len(r_targets)
     
-<<<<<<< HEAD
-    # 2. Reconstruction récursive de la grille (Inverse Averaging)
-=======
     # 2. Reconstruction récursive de la grille
-    # Objectif : que (nodes[i] + nodes[i+1])/2 == r_targets[i]
->>>>>>> 8b29edc0e2ea61259c8181881c3ffec4bb466716
     nodesRadius = np.zeros(N + 1)
     nodesChord = np.zeros(N + 1)
     nodesTwistAngles = np.zeros(N + 1)
     
-<<<<<<< HEAD
-=======
-    # Initialisation au pied de pale
->>>>>>> 8b29edc0e2ea61259c8181881c3ffec4bb466716
     nodesRadius[0] = hubRadius
     nodesChord[0] = chord_targets[0]
     nodesTwistAngles[0] = twist_targets[0]
@@ -93,28 +61,17 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     if not np.all(np.diff(nodesRadius) > 0):
         print("ATTENTION: La grille radiale reconstruite n'est pas strictement croissante.")
 
-<<<<<<< HEAD
     # 3. Chargement des profils
     centersAirfoils = []
     for foilName in airfoil_names:
         # CORRECTION : On rajoute explicitement ".foil" et on sécurise le chemin
         foil_path = os.path.join(script_dir, 'geometry', 'Airfoils2', f"{foilName}.foil")
         centersAirfoils.append(Airfoil(foil_path, headerLength=1))
-=======
-    # 3. Chargement des profils depuis le dossier Airfoils2
-    centersAirfoils = []
-    for foilName in airfoil_names:
-        centersAirfoils.append(Airfoil('./geometry/Airfoils2/' + foilName, headerLength=1))
->>>>>>> 8b29edc0e2ea61259c8181881c3ffec4bb466716
 
     # 4. Initialisation de la turbine SVEN
     myWT = windTurbine(nBlades, [0., 0., 0.], hubRadius, rotationalVelocity, windVelocity, bladePitch)
     blades = myWT.initializeTurbine(nodesRadius, nodesChord, nearWakeLength, centersAirfoils, nodesTwistAngles, myWT.nBlades)
 
-<<<<<<< HEAD
-=======
-    # Forçage des valeurs aux centres pour éliminer toute dérive numérique de moyennage
->>>>>>> 8b29edc0e2ea61259c8181881c3ffec4bb466716
     for b in blades:
         b.centerChords = chord_targets.copy()
 
@@ -155,11 +112,7 @@ for yaw_val in yaws_deg:
 
         print(f"\n--- Cas: Yaw {yaw_val}°, TSR {tsr_val} (V={V_mag:.2f}m/s) ---")
 
-<<<<<<< HEAD
         # Initialisation
-=======
-        # Initialisation avec dénormalisation 2.25m
->>>>>>> 8b29edc0e2ea61259c8181881c3ffec4bb466716
         Blades, WindTurbine, deltaFlts, tol_newton = NewMexicoWindTurbine(uInfty, density, nearWakeLength)
         
         centersRadius = 0.5 * (WindTurbine.nodesRadius[1:] + WindTurbine.nodesRadius[:-1])
@@ -178,11 +131,7 @@ for yaw_val in yaws_deg:
             WindTurbine.updateTurbine(refAzimuth)
             timeSim += timeStep
             
-<<<<<<< HEAD
-            # Appel du solveur de Newton
-=======
             # Appel du solveur de Newton [cite: 20]
->>>>>>> 8b29edc0e2ea61259c8181881c3ffec4bb466716
             max_err, solver_time, iters_taken = update(
                 Blades, uInfty, timeStep, timeSim, innerIter, 
                 deltaFlts, global_start_time, [], 
