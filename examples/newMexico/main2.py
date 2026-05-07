@@ -37,14 +37,17 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     geom_file = os.path.join(script_dir, 'geometry', 'blade.dat')
     data = np.genfromtxt(geom_file, skip_header=1, dtype=str)
     
+    # Les données de blade.dat sont en mètres
     r_targets = data[:, 0].astype(float) 
-    twist_targets = data[:, 1].astype(float)
+    
+    twist_targets = -1.0 * data[:, 1].astype(float) 
+    
     chord_targets = np.abs(data[:, 2].astype(float)) 
     airfoil_names = data[:, 3]
     
     N = len(r_targets)
     
-    # 2. Reconstruction récursive de la grille
+    # 2. Reconstruction récursive de la grille 
     nodesRadius = np.zeros(N + 1)
     nodesChord = np.zeros(N + 1)
     nodesTwistAngles = np.zeros(N + 1)
@@ -64,7 +67,6 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     # 3. Chargement des profils
     centersAirfoils = []
     for foilName in airfoil_names:
-        # CORRECTION : On rajoute explicitement ".foil" et on sécurise le chemin
         foil_path = os.path.join(script_dir, 'geometry', 'Airfoils2', f"{foilName}.foil")
         centersAirfoils.append(Airfoil(foil_path, headerLength=1))
 
@@ -72,6 +74,7 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     myWT = windTurbine(nBlades, [0., 0., 0.], hubRadius, rotationalVelocity, windVelocity, bladePitch)
     blades = myWT.initializeTurbine(nodesRadius, nodesChord, nearWakeLength, centersAirfoils, nodesTwistAngles, myWT.nBlades)
 
+    # Forçage des cordes aux centres
     for b in blades:
         b.centerChords = chord_targets.copy()
 
@@ -131,7 +134,7 @@ for yaw_val in yaws_deg:
             WindTurbine.updateTurbine(refAzimuth)
             timeSim += timeStep
             
-            # Appel du solveur de Newton [cite: 20]
+            # Appel du solveur de Newton
             max_err, solver_time, iters_taken = update(
                 Blades, uInfty, timeStep, timeSim, innerIter, 
                 deltaFlts, global_start_time, [], 
