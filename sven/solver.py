@@ -30,22 +30,21 @@ def update(
         blade.updateSheds(blade.gammaBound)
         blade.updateTrails(blade.gammaBound)
    
-    # 5. Analyses mathématiques en arrière-plan (si actif)
-    if analyzer.active:
-        analyzer.run_shadow_convergence(blades, uInfty, deltaFlts, max_iter=innerIter)
-        analyzer.extract_eta_prime(blades)
+    # 5. Évaluation du Eta optimal au point INITIAL (Gamma_init)
+    if analyzer.active_eta_opt:
+        analyzer.evaluate_eta_opt(blades, deltaFlts, is_init=True)
 
     # =========================================================================
-    # BOUCLE DE CONVERGENCE (Intégration de Newton et du Break)
+    # BOUCLE DE CONVERGENCE (Newton et Picard)
     # =========================================================================
     t_solver_start = time.time()
     bladesGammaBounds = [0.] * len(blades)
     max_err = 0.0
-    iters_taken = innerIter # Par défaut, on suppose qu'on fait toutes les itérations
+    iters_taken = innerIter
 
     if algo_type == "picard":
         for i in range(innerIter):
-            iters_taken = i + 1 # Mise à jour du nombre d'itérations réelles
+            iters_taken = i + 1 
             nearWakeInducedVelocities = nearWakeInduction(blades, deltaFlts)
             max_err = 0.0
             
@@ -90,7 +89,8 @@ def update(
             if tol > 0 and max_err < tol:
                 break
                 
-            J, _, _,_ = analyzer.compute_jacobian_and_K(blades, deltaFlts, compute_K=False)
+            # Calcul de la Jacobienne
+            J = analyzer.compute_jacobian(blades, deltaFlts)
             A = np.eye(total_n) - J
             try:
                 dGamma = np.linalg.solve(A, err_vector)
@@ -110,8 +110,13 @@ def update(
                 bladesGammaBounds[ib] = new_g
                 idx += n_sec
 
-    solver_time = time.time() - t_solver_start
     # =========================================================================
+    
+    # Évaluation du Eta optimal au point FINAL (Gamma_sol)
+    if analyzer.active_eta_opt:
+        analyzer.evaluate_eta_opt(blades, deltaFlts, is_init=False)
+
+    solver_time = time.time() - t_solver_start
 
     for (iBlade, blade) in enumerate(blades):
         blade.storeOldGammaBound(bladesGammaBounds[iBlade])
@@ -131,5 +136,4 @@ def update(
 
     iterationVect.append([time.time() - iterationTime, time.time()-startTime])
 
-  
     return max_err, solver_time, iters_taken
