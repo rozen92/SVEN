@@ -68,7 +68,7 @@ def update(
     elif algo_type == "newton":
         total_n = sum(len(b.centers) for b in blades)
         for i in range(innerIter):
-            iters_taken = i + 1 # Mise à jour du nombre d'itérations réelles
+            iters_taken = i + 1 
             nearWakeInducedVelocities = nearWakeInduction(blades, deltaFlts)
             f_g_list = []
             current_g_list = []

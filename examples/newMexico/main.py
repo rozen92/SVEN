@@ -91,7 +91,7 @@ DegreesPerTimeStep = 10.  # Résolution azimutale
 rotationsKeptInWake = 10  # Longueur du sillage
 nearWakeLength = 360 * rotationsKeptInWake
 innerIter = 12
-density = 1.191           # kg/m3
+density = 1.198          # kg/m3
 N_avg = 3                 # Moyenne sur les 3 derniers tours
 steps_per_rotation = int(360. / DegreesPerTimeStep)
 
