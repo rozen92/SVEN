@@ -90,7 +90,7 @@ def update(
             if tol > 0 and max_err < tol:
                 break
                 
-            J, _, _ = analyzer.compute_jacobian_and_K(blades, deltaFlts, compute_K=False)
+            J, _, _,_ = analyzer.compute_jacobian_and_K(blades, deltaFlts, compute_K=False)
             A = np.eye(total_n) - J
             try:
                 dGamma = np.linalg.solve(A, err_vector)
