@@ -43,6 +43,8 @@ def update(
     iters_taken = innerIter
 
     if algo_type == "picard":
+        relax_val = locals().get('relax', 0.05) 
+        
         for i in range(innerIter):
             iters_taken = i + 1 
             nearWakeInducedVelocities = nearWakeInduction(blades, deltaFlts)
@@ -51,14 +53,18 @@ def update(
             iBlade = 0
             for (blade, ind) in zip(blades, nearWakeInducedVelocities):
                 old_g = blade.gammaBound.copy()
-                bladesGammaBounds[iBlade] = blade.estimateGammaBound(uInfty, ind)
+                
+                # 1. Calcul pur de la cible
+                f_g = blade.compute_f_Gamma(uInfty, ind)
+                
+                # 2. Application de la relaxation (dynamique)
+                bladesGammaBounds[iBlade] = blade.apply_Picard_relaxation(f_g, custom_relax=relax_val)
                 
                 err = np.max(np.abs(blade.f_Gamma - old_g))
                 max_err = max(max_err, err)
 
                 blade.updateSheds(bladesGammaBounds[iBlade])
                 blade.updateTrails(bladesGammaBounds[iBlade])
-                blade.gammaBound = bladesGammaBounds[iBlade]
                 iBlade += 1
                 
             if tol > 0 and max_err < tol:
@@ -73,13 +79,9 @@ def update(
             current_g_list = []
             
             for blade, ind in zip(blades, nearWakeInducedVelocities):
-                old_g = blade.gammaBound.copy()
-                blade.estimateGammaBound(uInfty, ind)
-                blade.gammaBound = old_g 
-                blade.newGammaBound = old_g 
-                
-                f_g_list.append(blade.f_Gamma)
-                current_g_list.append(old_g)
+                f_g = blade.compute_f_Gamma(uInfty, ind)
+                f_g_list.append(f_g)
+                current_g_list.append(blade.gammaBound.copy())
                 
             F_G = np.concatenate(f_g_list)
             Gamma = np.concatenate(current_g_list)

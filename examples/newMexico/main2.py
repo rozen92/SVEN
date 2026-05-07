@@ -85,13 +85,17 @@ nRotations = 10.
 DegreesPerTimeStep = 10.  
 rotationsKeptInWake = 10  
 nearWakeLength = 360 * rotationsKeptInWake
-innerIter = 15            # Newton converge typiquement en 2-3 itérations
+innerIter = 15            # Convergence max par pas de temps
 density = 1.198           
 N_avg = 3                 # Moyenne sur les 3 derniers tours
 steps_per_rotation = int(360. / DegreesPerTimeStep)
 
 Omega = 44.5163679 
 R_max = 2.25 # Envergure totale (span)
+
+# Paramétrage de la méthode Hybride (Picard -> Newton)
+warmup_rotations = 5
+warmup_steps = warmup_rotations * steps_per_rotation
 
 # Grille de paramètres
 yaws_deg = np.array([0.0, 15.0, 30.0])
@@ -100,7 +104,7 @@ tsrs = np.array([4, 8, 12])
 global_dataset = []
 global_start_time = time.time()
 
-print(f"Lancement de la campagne Newton (Géométrie exacte blade.dat, analyseur épuré)")
+print(f"Lancement de la campagne Hybride (Picard {warmup_rotations} tours -> Newton)")
 
 for yaw_val in yaws_deg:
     yaw_rad = np.radians(yaw_val)
@@ -138,22 +142,37 @@ for yaw_val in yaws_deg:
             WindTurbine.updateTurbine(refAzimuth)
             timeSim += timeStep
             
-            # Appel du solveur de Newton
+            # =================================================================
+            # STRATÉGIE HYBRIDE : Picard puis Newton
+            # =================================================================
+            if it < warmup_steps:
+                current_algo = "picard"
+                current_tol = 1e-3  # Tolérance relâchée pour le transitoire
+                # On force la relaxation à 0.3 sur toutes les pales
+                for b in Blades:
+                    b.relax = 0.3
+            else:
+                current_algo = "newton"
+                current_tol = tol_newton  # 1e-5 (Précision forte pour le régime établi)
+            # =================================================================
+
+            # Appel du solveur (sans besoin de changer l'en-tête de update)
             max_err, solver_time, iters_taken = update(
                 Blades, uInfty, timeStep, timeSim, innerIter, 
                 deltaFlts, global_start_time, [], 
-                algo_type="newton", tol=tol_newton
+                algo_type=current_algo, tol=current_tol
             )
             
-            # Avertissement si Newton n'atteint pas la tolérance
-            if max_err > tol_newton:
-                print(f"  [Avertissement] Pas de temps {it+1}: Newton n'a pas atteint la tolérance (Erreur = {max_err:.2e})")
+            # Avertissement si le solveur courant n'atteint pas sa tolérance
+            if max_err > current_tol:
+                print(f"  [Avertissement] Pas {it+1} ({current_algo}): Tolérance non atteinte (Erreur = {max_err:.2e})")
 
             # Récupération des données du pas de temps courant
             Fn, Ft = WindTurbine.evaluateForces(density)
             Veff = WindTurbine.blades[0].effectiveVelocity
             Alpha = WindTurbine.blades[0].attackAngle
             
+            # Moyennage sur les N_avg derniers tours
             if it >= start_avg_it:
                 t_idx = int((it - start_avg_it) // steps_per_rotation)
                 a_idx = int((it - start_avg_it) % steps_per_rotation)
@@ -163,8 +182,9 @@ for yaw_val in yaws_deg:
                     Veff_history[t_idx, a_idx, :] = Veff
                     Alpha_history[t_idx, a_idx, :] = Alpha
             
+            # Affichage périodique (On ajoute le nom de l'algorithme)
             if (it + 1) % 50 == 0: 
-                print(f" Pas {it+1}/{total_steps} | Newton: {iters_taken} iters | Err: {max_err:.2e}")
+                print(f" Pas {it+1}/{total_steps} | {current_algo.capitalize()}: {iters_taken} iters | Err: {max_err:.2e}")
 
         # ---------------------------------------------------------
         # Sauvegarde des résultats SPÉCIFIQUES À CE CAS
@@ -179,7 +199,7 @@ for yaw_val in yaws_deg:
         })
         df_eta.to_csv(os.path.join(outDir, f'eta_history_yaw{yaw_val}_tsr{tsr_val}.csv'), index=False)
 
-        # 2. Moyennage et stockage des forces/vitesses/alphas (un fichier par cas)
+        # 2. Moyennage et stockage des forces/vitesses/alphas
         Fn_mean = np.mean(Fn_history, axis=0)
         Ft_mean = np.mean(Ft_history, axis=0)
         Veff_mean = np.mean(Veff_history, axis=0)
@@ -189,7 +209,6 @@ for yaw_val in yaws_deg:
         for a_idx in range(steps_per_rotation):
             theta = a_idx * DegreesPerTimeStep
             for ir, r_val in enumerate(centersRadius):
-                # On stocke pour le fichier spécifique
                 case_results.append({
                     'Radius': r_val, 
                     'Azimuth': theta, 

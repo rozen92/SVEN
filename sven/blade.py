@@ -166,32 +166,22 @@ class Blade:
         return
 
 
-    def estimateGammaBound(self, uInfty, nearWakeInducedVelocities):
+    def compute_f_Gamma(self, uInfty, nearWakeInducedVelocities):
         """
-        Estimates bound circulation associated to each blade section based on 
-        blade-element theory and Kutta-Joukowski theorem.
+        [POUR NEWTON ET PICARD]
+        Évalue la cible physique f(Gamma) sans altérer l'état de la pale.
         """
-
-        # On utilise directement le vecteur uInfty dans le calcul de la vitesse effective
         uEffective = (uInfty - self.centersTranslationVelocity + nearWakeInducedVelocities + self.inductionsFromWake)
-
         r = R.from_matrix(self.centersOrientationMatrix)
-        
-  
         uEffectiveInElementRef = r.apply(uEffective, inverse=True)
 
-
-        # uEffectiveInElementRef[:, 1] correspond à la vitesse transverse (envergure)
         norm3D = np.linalg.norm(uEffectiveInElementRef, axis=1)
-        
         norm3D_safe = np.where(norm3D == 0, 1e-12, norm3D)
         self.eta_prime = np.abs(uEffectiveInElementRef[:, 1]) / norm3D_safe
-        # -----------------------------------------------------
 
         # 2D assumption
         uEffectiveInElementRef[:, 1] = 0.
-        self.attackAngle = np.arctan2(
-            uEffectiveInElementRef[:, 2], uEffectiveInElementRef[:, 0])
+        self.attackAngle = np.arctan2(uEffectiveInElementRef[:, 2], uEffectiveInElementRef[:, 0])
 
         for i in range(len(self.centers)):
             self.lift[i] = self.airfoils[i].getLift(self.attackAngle[i])
@@ -199,16 +189,28 @@ class Blade:
 
         self.effectiveVelocity = np.linalg.norm(uEffectiveInElementRef, axis=1)
 
-        newGamma = .5 * self.effectiveVelocity * self.centerChords * self.lift
-        self.f_Gamma = np.copy(newGamma)
+        # Calcul sans modifier self.gammaBound
+        self.f_Gamma = .5 * self.effectiveVelocity * self.centerChords * self.lift
         
+        return self.f_Gamma
 
-        newGammaBounds = self.gammaBound + self.relax * (newGamma - self.gammaBound)
+    def apply_Picard_relaxation(self, target_gamma, custom_relax=None):
+        """
+        [POUR PICARD]
+        Applique la relaxation vers la cible et met à jour l'état de la pale..
+        """
+        # Utilise custom_relax s'il est fourni, sinon la valeur par défaut de la pale
+        relax_factor = custom_relax if custom_relax is not None else self.relax
+        
+        newGammaBounds = self.gammaBound + relax_factor * (target_gamma - self.gammaBound)
 
+        # Force la valeur cible brute si la circulation était nulle (démarrage)
         idx = np.where(self.gammaBound == 0)
-        newGammaBounds[idx] = newGamma[idx]
+        newGammaBounds[idx] = target_gamma[idx]
 
+        # Mise à jour effective de l'état
         self.gammaBound = newGammaBounds
+        self.newGammaBound = np.copy(newGammaBounds)
 
         return newGammaBounds
 
