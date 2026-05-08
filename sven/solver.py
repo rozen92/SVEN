@@ -6,7 +6,7 @@ analyzer = MathAnalyzer()
 
 def update(
     blades, uInfty, timeStep, timeSimulation, innerIter, 
-    deltaFlts, startTime, iterationVect, algo_type="picard", tol=0.0):
+    deltaFlts, startTime, iterationVect, algo_type="picard", tol=0.0,calc_eta=False):
 
     iterationTime = time.time()
     
@@ -93,6 +93,8 @@ def update(
                 
             # Calcul de la Jacobienne
             J = analyzer.compute_jacobian(blades, deltaFlts)
+            if calc_eta: # Calcul de l'eta optimal de Picard
+                analyzer.last_eta_opt = analyzer.compute_optimal_eta(J) 
             A = np.eye(total_n) - J
             try:
                 dGamma = np.linalg.solve(A, err_vector)
