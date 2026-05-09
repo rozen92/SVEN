@@ -10,9 +10,11 @@ def update(
     deltaFlts, startTime, iterationVect, algo_type="hybrid", tol=0.0, 
     picard_iters=10, current_relax=0.3):
 
+    # Initialisation du chronomètre pour la fonction et le solveur
+    iterationTime = time.time()
     t_solver_start = time.time()
     
-    # 1. Initialize all inductions
+    # 1. Initialisation des inductions
     for blade in blades:
         blade.inductionsFromWake[:, :] = 0.
         blade.inductionsAtNodes[:, :] = 0.
@@ -21,11 +23,11 @@ def update(
 
     nearWakeLength = blades[0].nearWakeLength
 
-    # 3. Inductions on blade
+    # 3. Inductions sur la pale
     if nearWakeLength > 2:
         wakeFilamentsInductionsOnBladeOrWake(blades, deltaFlts, "blade")
 
-    # 4. Initialize for convergence loop
+    # 4. Initialisation pour la boucle de convergence
     for blade in blades:
         blade.updateSheds(blade.gammaBound)
         blade.updateTrails(blade.gammaBound)
@@ -44,6 +46,7 @@ def update(
     picard_count = 0
     newton_count = 0
     eta_evals = 0
+    valid_eta_count = 0 # NOUVEAU COMPTEUR
     best_iter = 0
     
     # --- PHASE 1 : Pré-conditionnement Picard ---
@@ -75,7 +78,7 @@ def update(
             
     # --- PHASE 2 : Affinage Full Newton ---
     if best_err > tol and picard_count < innerIter:
-        # On restaure la meilleure solution de Picard comme point de départ
+        # On repart de la meilleure solution de Picard
         for b, g in zip(blades, best_gammas):
             b.gammaBound = g.copy()
             b.newGammaBound = g.copy()
@@ -109,10 +112,14 @@ def update(
             if tol > 0 and max_err < tol:
                 break
                 
-            # FULL NEWTON : Calcul de la Jacobienne à CHAQUE itération
+            # Calcul de la Jacobienne à chaque itération (Full Newton)
             J = analyzer.compute_jacobian(blades, deltaFlts)
             last_eta_opt = analyzer.compute_optimal_eta(J)
             eta_evals += 1
+            
+            # Vérification de l'exploitabilité des valeurs propres
+            if last_eta_opt > 0:
+                valid_eta_count += 1
             
             A = np.eye(total_n) - J
             try:
@@ -131,13 +138,11 @@ def update(
                 blade.updateTrails(new_g)
                 idx += n_sec
 
-    # --- DIAGNOSTIC ARGMIN (Rebond) ---
+    # Détection de rebond
     total_iters_done = picard_count + newton_count
-    early_argmin = False
-    if best_err > tol and best_iter < total_iters_done:
-        early_argmin = True
+    early_argmin = (best_iter < total_iters_done) and (best_err > tol)
 
-    # --- RESTAURATION ARGMIN FINAL ---
+    # Restauration de l'Argmin
     for ib, (b, g) in enumerate(zip(blades, best_gammas)):
         b.gammaBound = g.copy()
         b.newGammaBound = g.copy()
@@ -152,13 +157,13 @@ def update(
     for iBlade, blade in enumerate(blades):
         blade.storeOldGammaBound(bladesGammaBounds[iBlade])
 
-    # 6. Inductions on wake
+    # 6. Inductions sur le sillage
     if nearWakeLength > 2:
         wakeFilamentsInductionsOnBladeOrWake(blades, deltaFlts, "wake")
 
     bladeInductionsOnWake(blades, deltaFlts)
     
-    # 7. Advection and Splicing
+    # 7. Advection et Splicing
     if nearWakeLength > 2:
         for blade in blades:
             blade.advectFilaments(uInfty, timeStep)
@@ -167,4 +172,5 @@ def update(
 
     iterationVect.append([time.time() - iterationTime, time.time() - startTime])
 
-    return best_err, solver_time, picard_count, newton_count, best_algo, last_eta_opt, early_argmin, best_iter, eta_evals
+    # On renvoie valid_eta_count à l'avant-dernière position
+    return best_err, solver_time, picard_count, newton_count, best_algo, last_eta_opt, early_argmin, best_iter, eta_evals, valid_eta_count

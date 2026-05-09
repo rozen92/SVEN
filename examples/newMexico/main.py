@@ -16,26 +16,30 @@ from sven.blade import *
 from sven.solver import update
 
 # Dossier de sortie
-outDir = 'outputs_campagne_full_newton_hybrid'
+outDir = 'outputs_full_newton_hybrid'
 if not os.path.exists(outDir):
     os.makedirs(outDir)
 
 def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
-    sign = -1.
+    sign = -1.0
     hubRadius = 0.210  
     nBlades = 3
     rotationalVelocity = 44.5163679  
     bladePitch = sign * 0.040143
+    
     geom_file = os.path.join(script_dir, 'geometry', 'blade.dat')
     data = np.genfromtxt(geom_file, skip_header=1, dtype=str)
+    
     r_targets = data[:, 0].astype(float) 
     twist_targets = -1.0 * data[:, 1].astype(float) 
     chord_targets = np.abs(data[:, 2].astype(float)) 
     airfoil_names = data[:, 3]
     N = len(r_targets)
+    
     nodesRadius = np.zeros(N + 1)
     nodesChord = np.zeros(N + 1)
     nodesTwistAngles = np.zeros(N + 1)
+    
     nodesRadius[0] = hubRadius
     nodesChord[0] = chord_targets[0]
     nodesTwistAngles[0] = twist_targets[0]
@@ -56,24 +60,24 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     for b in blades: 
         b.centerChords = chord_targets.copy()
         
-    return blades, myWT, 0.01, 1e-5 
+    return blades, myWT, 0.01, 1e-5
 
 # -----------------------------------------------------------------------------
 # Paramètres de la campagne
 # -----------------------------------------------------------------------------
-nRotations = 15.          
-DegreesPerTimeStep = 10.  
-rotationsKeptInWake = 10  
+nRotations = 15.0
+DegreesPerTimeStep = 10.0
+rotationsKeptInWake = 10
 nearWakeLength = 360 * rotationsKeptInWake
-density = 1.198           
-N_avg = 3                 
-steps_per_rotation = int(360. / DegreesPerTimeStep)
-Omega = 44.5163679 
-R_max = 2.25 
+density = 1.198
+N_avg = 3
+steps_per_rotation = int(360.0 / DegreesPerTimeStep)
+Omega = 44.5163679
+R_max = 2.25
 
 # Stratégie Full-Newton Hybrid
-total_inner_iter = 20
-picard_iters_fixed = 15
+total_inner_iter = 15
+picard_iters_fixed = 10
 
 # Grilles
 tsrs = np.array([4, 6, 8, 10, 12])
@@ -81,9 +85,8 @@ yaws_deg = np.array([-15.0, -10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0]
 
 global_start_time = time.time()
 
-print(f"Lancement Campagne Full-Newton Hybrid (Groupement par TSR)")
-print(f"Stratégie : {picard_iters_fixed} iters Picard puis {total_inner_iter - picard_iters_fixed} iters Newton")
-print(f"Légende Logs : Win(N/P)=Vainqueur | it*=Iter Argmin (!=rebond) | J=Evals Jacobienne | Rel=Relaxation\n")
+print(f"Lancement Campagne Full-Newton Hybrid")
+print(f"Stratégie : {picard_iters_fixed}P + {total_inner_iter - picard_iters_fixed}N\n")
 
 # =============================================================================
 # BOUCLE EXTERIEURE : TSR
@@ -92,17 +95,15 @@ for tsr_val in tsrs:
     tsr_start = time.time()
     current_tsr_dataset = [] 
     
-    print(f"############################################################")
-    print(f" TRAITEMENT TSR : {tsr_val}")
-    print(f"############################################################")
+    print(f"#################### TSR : {tsr_val} ####################")
 
     for yaw_val in yaws_deg:
         yaw_rad = np.radians(yaw_val)
         V_mag = (Omega * R_max) / tsr_val
         uInfty = np.array([V_mag * np.cos(yaw_rad), V_mag * np.sin(yaw_rad), 0.0], dtype=np.float32)
 
-        print(f"\n--- Yaw {yaw_val}° (V = {V_mag:.2f} m/s) ---")
-        Blades, WindTurbine, deltaFlts, tol_hybrid = NewMexicoWindTurbine(uInfty, density, nearWakeLength)
+        print(f"\n--- Yaw {yaw_val}° ---")
+        Blades, WindTurbine, deltaFlts, tol_hybrid = NewMexicoWindTurbine(uInfty, density, 3600)
         
         centersRadius = 0.5 * (WindTurbine.nodesRadius[1:] + WindTurbine.nodesRadius[:-1])
         timeStep = np.radians(DegreesPerTimeStep) / WindTurbine.rotationalVelocity
@@ -115,7 +116,7 @@ for tsr_val in tsrs:
         Alpha_history = np.zeros((N_avg, steps_per_rotation, len(centersRadius)))
 
         refAzimuth = -WindTurbine.rotationalVelocity * timeStep
-        timeSim = 0.
+        timeSim = 0.0
         
         current_relax = 0.35 
 
@@ -125,7 +126,7 @@ for tsr_val in tsrs:
             timeSim += timeStep
             
             # Appel du solveur
-            m_err, s_time, p_its, n_its, b_algo, e_opt, early_min, b_iter, j_evals = update(
+            m_err, s_time, p_its, n_its, b_algo, e_opt, early_min, b_iter, j_evals, j_succ = update(
                 Blades, uInfty, timeStep, timeSim, total_inner_iter, 
                 deltaFlts, global_start_time, [], 
                 algo_type="hybrid", tol=tol_hybrid, 
@@ -133,22 +134,24 @@ for tsr_val in tsrs:
                 current_relax=current_relax
             )
             
-            # --- LOGS COMPACTS ---
-            status = f"{p_its}P+{n_its}N" if n_its > 0 else f"{p_its}P"
-            win_char = b_algo[0].upper() # 'N' ou 'P'
-            rebond = "!" if early_min else " "
-            
-            # Affichage console tous les 30 pas
-            if (it + 1) % 30 == 0: 
-                print(f" Pas {it+1:3}/{total_steps} | {status:<7} | Win:{win_char} | it*:{b_iter:>2}{rebond} | J:{j_evals} | Rel:{current_relax:.3f} | Err:{m_err:.1e}")
-
-            # Warning spécifique si Newton a échoué
-            if b_algo == "Picard" and n_its > 0 and (it + 1) % 30 != 0:
-                print(f" [Alerte] Pas {it+1:3} | Newton a divergé. Picard restaure it*:{b_iter} | Err:{m_err:.1e}")
-                
-            # Mise à jour du taux de relaxation pour le prochain pas de temps
+            # Mise à jour du taux de relaxation pour le prochain pas
             if e_opt > 0:
                 current_relax = min(0.35, 0.9 * e_opt)
+
+            # --- 1. ALERTES CONDITIONNELLES (À chaque pas) ---
+            if m_err > tol_hybrid:
+                if b_algo == "Picard" and n_its > 0:
+                    print(f" [DIV]  Pas {it+1:3}/{total_steps} | Newton a divergé (Restauration it*:{b_iter}) | Err:{m_err:.1e}")
+                else:
+                    print(f" [WARN] Pas {it+1:3}/{total_steps} | Précision non atteinte | Err:{m_err:.1e}")
+
+            # --- 2. LOGS PÉRIODIQUES D'ANALYSE (Tous les 30 pas) ---
+            if (it + 1) % 30 == 0:
+                status = f"{p_its}P+{n_its}N"
+                win_char = b_algo[0].upper()
+                reb = "!" if early_min else " "
+                
+                print(f"        Pas {it+1:3}/{total_steps} | {status:<7} | Win:{win_char} | it*:{b_iter:>2}{reb} | J:{j_succ}/{j_evals} | Rel:{current_relax:.3f} | Err:{m_err:.1e}")
 
             # --- STOCKAGE MOYENNAGE ---
             if it >= start_avg_it:
@@ -188,6 +191,6 @@ for tsr_val in tsrs:
     df_tsr = pd.DataFrame(current_tsr_dataset)
     filename = os.path.join(outDir, f'results_TSR_{tsr_val}.csv')
     df_tsr.to_csv(filename, index=False)
-    print(f">> Fichier {filename} généré en {time.time() - tsr_start:.1f}s.\n")
+    print(f"\n>> Fichier TSR {tsr_val} généré en {time.time() - tsr_start:.1f}s.\n")
 
-print(f"\nCAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")
+print(f"CAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")
