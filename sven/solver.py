@@ -149,7 +149,7 @@ def update(
                 b.updateTrails(g)
             
             # --- EXPANSION GÉOMÉTRIQUE ---
-            # Puisque Newton a raté, on double le temps de "massage" du sillage.
+            # Newton a raté, on double le nombre d'itérations de Picard
             # On le plafonne à 40 pour éviter qu'un bloc ne dévore tout le budget restant d'un coup.
             current_p_block = min(current_p_block * 2, 40)
 

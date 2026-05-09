@@ -52,7 +52,7 @@ Omega = 44.5163679
 R_max = 2.25
 
 # Paramètres de la stratégie "Test & Rollback"
-max_picard_iters = 40  # Budget total pour le train Picard (8 blocs de 5)     
+max_picard_iters = 500  # Budget total pour le train Picard  
 p_block = 5           
 n_block = 5           
 
@@ -83,13 +83,14 @@ for tsr_val in tsrs:
         Ft_history = np.zeros_like(Fn_history)
         Veff_history = np.zeros_like(Fn_history)
         Alpha_history = np.zeros_like(Fn_history)
+        Gamma_history = np.zeros_like(Fn_history) # Nouveau : stockage de Gamma
 
         current_relax = 0.35 
 
         for it in range(total_steps):
             WT.updateTurbine(WT.rotationalVelocity * tStep * (it+1))
             
-            # Nouvelle signature allégée
+            # Signature allégée
             m_err, st, p_its, n_its, win, e_opt, j_ev, j_ok = update(
                 Blades, uInfty, tStep, 0, max_picard_iters, 
                 deltaFlts, global_start_time, [], 
@@ -120,6 +121,21 @@ for tsr_val in tsrs:
                     Ft_history[idx_rot, idx_azi, :] = Ft
                     Veff_history[idx_rot, idx_azi, :] = WT.blades[0].effectiveVelocity
                     Alpha_history[idx_rot, idx_azi, :] = WT.blades[0].attackAngle
+                    Gamma_history[idx_rot, idx_azi, :] = WT.blades[0].gammaBound
+
+        # --- BILAN DU YAW : Statistiques Gamma et Périodicité ---
+        Gamma_flat = Gamma_history.flatten()
+        # Pire variation d'effort entre les 3 tours (np.ptp sur l'axe des rotations)
+        Fn_ptp = np.max(np.ptp(Fn_history, axis=0)) 
+        Ft_ptp = np.max(np.ptp(Ft_history, axis=0))
+        # Erreur relative par rapport aux moyennes des valeurs absolues
+        Fn_mean_abs = np.mean(np.abs(Fn_history))
+        Ft_mean_abs = np.mean(np.abs(Ft_history))
+        Fn_rel = (Fn_ptp / Fn_mean_abs * 100) if Fn_mean_abs > 0 else 0.0
+        Ft_rel = (Ft_ptp / Ft_mean_abs * 100) if Ft_mean_abs > 0 else 0.0
+
+        # Impression sur une seule ligne
+        print(f"        -> [BILAN] Gamma: Min={np.min(Gamma_flat):.2f} Moy={np.mean(Gamma_flat):.2f} Max={np.max(Gamma_flat):.2f} Std={np.std(Gamma_flat):.2f} | Périodicité (Max Δ/Moy): Fn={Fn_ptp:.2e} ({Fn_rel:.2f}%) Ft={Ft_ptp:.2e} ({Ft_rel:.2f}%)")
 
         # Compilation TSR
         Fn_mean = np.mean(Fn_history, axis=0)
