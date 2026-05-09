@@ -2,11 +2,13 @@ import time
 import numpy as np
 from sven.inductions import *
 from sven.math_analyzer import MathAnalyzer
+
 analyzer = MathAnalyzer()
 
 def update(
     blades, uInfty, timeStep, timeSimulation, innerIter, 
-    deltaFlts, startTime, iterationVect, algo_type="picard", tol=0.0,calc_eta=False):
+    deltaFlts, startTime, iterationVect, algo_type="hybrid", tol=0.0, 
+    picard_iters=5, current_relax=0.3):
 
     iterationTime = time.time()
     
@@ -30,22 +32,21 @@ def update(
         blade.updateSheds(blade.gammaBound)
         blade.updateTrails(blade.gammaBound)
    
-    # 5. Évaluation du Eta optimal au point INITIAL (Gamma_init)
-    if analyzer.active_eta_opt:
-        analyzer.evaluate_eta_opt(blades, deltaFlts, is_init=True)
-
     # =========================================================================
-    # BOUCLE DE CONVERGENCE (Newton et Picard)
+    # BOUCLE DE CONVERGENCE (Mode Hybrid Intra-Step)
     # =========================================================================
     t_solver_start = time.time()
     bladesGammaBounds = [0.] * len(blades)
-    max_err = 0.0
-    iters_taken = innerIter
-
-    if algo_type == "picard":
-        relax_val = locals().get('relax', 0.05) 
+    
+    if algo_type == "hybrid":
+        total_n = sum(len(b.centers) for b in blades)
+        best_err = float('inf')
+        best_gammas = None
+        best_algo = ""
+        eta_opt_found = 0.0
         
-        for i in range(innerIter):
+        # --- PHASE 1 : Pré-conditionnement Picard ---
+        for i in range(picard_iters):
             iters_taken = i + 1 
             nearWakeInducedVelocities = nearWakeInduction(blades, deltaFlts)
             max_err = 0.0
@@ -53,72 +54,93 @@ def update(
             iBlade = 0
             for (blade, ind) in zip(blades, nearWakeInducedVelocities):
                 old_g = blade.gammaBound.copy()
-                
-                # 1. Calcul pur de la cible
                 f_g = blade.compute_f_Gamma(uInfty, ind)
+                new_g = blade.apply_Picard_relaxation(f_g, custom_relax=current_relax)
                 
-                # 2. Application de la relaxation (dynamique)
-                bladesGammaBounds[iBlade] = blade.apply_Picard_relaxation(f_g, custom_relax=relax_val)
-                
-                err = np.max(np.abs(blade.f_Gamma - old_g))
+                err = np.max(np.abs(f_g - old_g))
                 max_err = max(max_err, err)
 
-                blade.updateSheds(bladesGammaBounds[iBlade])
-                blade.updateTrails(bladesGammaBounds[iBlade])
-                iBlade += 1
-                
-            if tol > 0 and max_err < tol:
-                break
-
-    elif algo_type == "newton":
-        total_n = sum(len(b.centers) for b in blades)
-        for i in range(innerIter):
-            iters_taken = i + 1 
-            nearWakeInducedVelocities = nearWakeInduction(blades, deltaFlts)
-            f_g_list = []
-            current_g_list = []
-            
-            for blade, ind in zip(blades, nearWakeInducedVelocities):
-                f_g = blade.compute_f_Gamma(uInfty, ind)
-                f_g_list.append(f_g)
-                current_g_list.append(blade.gammaBound.copy())
-                
-            F_G = np.concatenate(f_g_list)
-            Gamma = np.concatenate(current_g_list)
-            
-            err_vector = F_G - Gamma
-            max_err = np.max(np.abs(err_vector))
-            if tol > 0 and max_err < tol:
-                break
-                
-            # Calcul de la Jacobienne
-            J = analyzer.compute_jacobian(blades, deltaFlts)
-            if calc_eta: # Calcul de l'eta optimal de Picard
-                analyzer.last_eta_opt = analyzer.compute_optimal_eta(J) 
-            A = np.eye(total_n) - J
-            try:
-                dGamma = np.linalg.solve(A, err_vector)
-                new_Gamma = Gamma + dGamma
-            except np.linalg.LinAlgError:
-                new_Gamma = F_G 
-                
-            idx = 0
-            for ib, blade in enumerate(blades):
-                n_sec = len(blade.centers)
-                new_g = new_Gamma[idx : idx+n_sec]
-                
-                blade.gammaBound = new_g
-                blade.newGammaBound = new_g.copy()
                 blade.updateSheds(new_g)
                 blade.updateTrails(new_g)
-                bladesGammaBounds[ib] = new_g
-                idx += n_sec
+                iBlade += 1
+                
+            # Argmin update
+            if max_err < best_err:
+                best_err = max_err
+                best_gammas = [b.gammaBound.copy() for b in blades]
+                best_algo = "picard"
+                
+            if tol > 0 and max_err < tol:
+                break
+                
+        # --- PHASE 2 : Affinage Newton ---
+        if best_err > tol:
+            # On restaure la meilleure solution de Picard comme point de départ
+            for b, g in zip(blades, best_gammas):
+                b.gammaBound = g.copy()
+                b.newGammaBound = g.copy()
+                b.updateSheds(g)
+                b.updateTrails(g)
+                
+            for i in range(innerIter - picard_iters):
+                iters_taken = picard_iters + i + 1
+                nearWakeInducedVelocities = nearWakeInduction(blades, deltaFlts)
+                f_g_list = []
+                current_g_list = []
+                
+                for blade, ind in zip(blades, nearWakeInducedVelocities):
+                    f_g = blade.compute_f_Gamma(uInfty, ind)
+                    f_g_list.append(f_g)
+                    current_g_list.append(blade.gammaBound.copy())
+                    
+                F_G = np.concatenate(f_g_list)
+                Gamma = np.concatenate(current_g_list)
+                
+                err_vector = F_G - Gamma
+                max_err = np.max(np.abs(err_vector))
+                
+                # Argmin update
+                if max_err < best_err:
+                    best_err = max_err
+                    best_gammas = [b.gammaBound.copy() for b in blades]
+                    best_algo = "newton"
+                    
+                if tol > 0 and max_err < tol:
+                    break
+                    
+                # Calcul de la Jacobienne (1 seule fois au début de Newton)
+                if i == 0:
+                    J = analyzer.compute_jacobian(blades, deltaFlts)
+                    eta_opt_found = analyzer.compute_optimal_eta(J)
+                    
+                A = np.eye(total_n) - J
+                try:
+                    dGamma = np.linalg.solve(A, err_vector)
+                    new_Gamma = Gamma + dGamma
+                except np.linalg.LinAlgError:
+                    new_Gamma = F_G 
+                    
+                idx = 0
+                for ib, blade in enumerate(blades):
+                    n_sec = len(blade.centers)
+                    new_g = new_Gamma[idx : idx+n_sec]
+                    blade.gammaBound = new_g
+                    blade.newGammaBound = new_g.copy()
+                    blade.updateSheds(new_g)
+                    blade.updateTrails(new_g)
+                    idx += n_sec
 
+        # --- RESTAURATION ARGMIN FINAL ---
+        for ib, (b, g) in enumerate(zip(blades, best_gammas)):
+            b.gammaBound = g.copy()
+            b.newGammaBound = g.copy()
+            b.updateSheds(g)
+            b.updateTrails(g)
+            bladesGammaBounds[ib] = g.copy()
+            
+        max_err = best_err
+       
     # =========================================================================
-    
-    # Évaluation du Eta optimal au point FINAL (Gamma_sol)
-    if analyzer.active_eta_opt:
-        analyzer.evaluate_eta_opt(blades, deltaFlts, is_init=False)
 
     solver_time = time.time() - t_solver_start
 
@@ -140,4 +162,4 @@ def update(
 
     iterationVect.append([time.time() - iterationTime, time.time()-startTime])
 
-    return max_err, solver_time, iters_taken
+    return max_err, solver_time, iters_taken, best_algo, eta_opt_found

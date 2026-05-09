@@ -13,13 +13,10 @@ sys.path.append(parent_of_project_dir)
 from sven.windTurbine import *
 from sven.airfoil import *
 from sven.blade import *
-from sven.solver import update, analyzer
+from sven.solver import update
 
-# Désactivation de l'analyseur automatique et de l'historique eta_opt
-analyzer.active_eta_opt = False
-
-# Dossier de sortie spécifique pour Newton Pur
-outDir = 'outputs_campagne_newton_pur'
+# Dossier de sortie
+outDir = 'outputs_campagne_intra_hybrid_pure'
 if not os.path.exists(outDir):
     os.makedirs(outDir)
 
@@ -48,47 +45,53 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
         centersAirfoils.append(Airfoil(foil_path, headerLength=1))
     myWT = windTurbine(nBlades, [0., 0., 0.], hubRadius, rotationalVelocity, windVelocity, bladePitch)
     blades = myWT.initializeTurbine(nodesRadius, nodesChord, nearWakeLength, centersAirfoils, nodesTwistAngles, myWT.nBlades)
-    for b in blades: 
-        b.centerChords = chord_targets.copy()
-    return blades, myWT, 0.01, 1e-5 # Tolérance stricte pour Newton
+    for b in blades: b.centerChords = chord_targets.copy()
+    return blades, myWT, 0.01, 1e-5
 
 # -----------------------------------------------------------------------------
-# Paramètres globaux de la campagne
+# Paramètres de la campagne
 # -----------------------------------------------------------------------------
 nRotations = 15.          
 DegreesPerTimeStep = 10.  
 rotationsKeptInWake = 10  
 nearWakeLength = 360 * rotationsKeptInWake
-innerIter = 15            
 density = 1.198           
 N_avg = 3                 
 steps_per_rotation = int(360. / DegreesPerTimeStep)
 Omega = 44.5163679 
 R_max = 2.25 
 
-# Grilles asymétriques
+# Stratégie Intra-Step Hybrid
+total_inner_iter = 15
+picard_iters_fixed = 5
+
+# Grilles
+tsrs = np.array([8])
 yaws_deg = np.array([-15.0, -10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0])
-tsrs = np.array([4, 5, 6, 7, 8, 9, 10, 11, 12])
 
 global_start_time = time.time()
 
-print(f"Lancement Campagne: Newton Uniquement")
-print(f"Configuration: {len(yaws_deg)} Yaws x {len(tsrs)} TSRs | 15 tours")
+print(f"Lancement Campagne Intra-Step Pure")
+print(f"Chaque pas de temps: {picard_iters_fixed} iters Picard puis {total_inner_iter - picard_iters_fixed} iters Newton")
 
-for yaw_val in yaws_deg:
-    yaw_rad = np.radians(yaw_val)
-    yaw_start = time.time()
-    current_yaw_dataset = []
+# =============================================================================
+# BOUCLE EXTERIEURE : TSR
+# =============================================================================
+for tsr_val in tsrs:
+    tsr_start = time.time()
+    current_tsr_dataset = [] 
     
-    print(f"\n============================================================")
-    print(f" TRAITEMENT YAW : {yaw_val}° (Newton Pur)")
-    print(f"============================================================")
+    print(f"\n############################################################")
+    print(f" TRAITEMENT TSR : {tsr_val}")
+    print(f"############################################################")
 
-    for tsr_val in tsrs:
+    for yaw_val in yaws_deg:
+        yaw_rad = np.radians(yaw_val)
         V_mag = (Omega * R_max) / tsr_val
         uInfty = np.array([V_mag * np.cos(yaw_rad), V_mag * np.sin(yaw_rad), 0.0], dtype=np.float32)
 
-        Blades, WindTurbine, deltaFlts, tol_newton = NewMexicoWindTurbine(uInfty, density, nearWakeLength)
+        print(f"\n--- Yaw {yaw_val}° (V = {V_mag:.2f} m/s) ---")
+        Blades, WindTurbine, deltaFlts, tol_hybrid = NewMexicoWindTurbine(uInfty, density, nearWakeLength)
         
         centersRadius = 0.5 * (WindTurbine.nodesRadius[1:] + WindTurbine.nodesRadius[:-1])
         timeStep = np.radians(DegreesPerTimeStep) / WindTurbine.rotationalVelocity
@@ -103,23 +106,34 @@ for yaw_val in yaws_deg:
         refAzimuth = -WindTurbine.rotationalVelocity * timeStep
         timeSim = 0.
         
+        # Initialisation de la relaxation 
+        current_relax = 0.35 
+
         for it in range(total_steps):
             refAzimuth += WindTurbine.rotationalVelocity * timeStep
             WindTurbine.updateTurbine(refAzimuth)
             timeSim += timeStep
             
-            # Utilisation exclusive de Newton
-            max_err, solver_time, iters_taken = update(
-                Blades, uInfty, timeStep, timeSim, innerIter, 
+            # Application de la stratégie Intra-Step Hybride uniformément
+            m_err, s_time, its, b_algo, e_opt = update(
+                Blades, uInfty, timeStep, timeSim, total_inner_iter, 
                 deltaFlts, global_start_time, [], 
-                algo_type="newton", tol=tol_newton, calc_eta=False
+                algo_type="hybrid", tol=tol_hybrid, 
+                picard_iters=picard_iters_fixed, 
+                current_relax=current_relax
             )
+            
+            # --- DIAGNOSTICS ET ADAPTATION ---
+            if b_algo == "picard":
+                print(f"  [Alerte Stabilité] Pas {it+1}: Picard a dû sauver le pas (Err: {m_err:.2e})")
+            elif m_err > tol_hybrid:
+                print(f"  [Warning] Pas {it+1}: Newton n'a pas atteint {tol_hybrid} (Err: {m_err:.2e})")
+                
+            # Mise à jour du taux de relaxation pour le prochain pas de temps
+            if e_opt > 0:
+                current_relax = min(0.35, 0.9 * e_opt)
 
-            # Log d'avertissement en cas de non-convergence
-            if max_err > tol_newton:
-                print(f"  [Warning] TSR {tsr_val} | Pas {it+1}: Newton non convergé (Err: {max_err:.2e})")
-
-            # Moyennage sur les 3 derniers tours (13, 14, 15)
+            # --- STOCKAGE MOYENNAGE ---
             if it >= start_avg_it:
                 idx_rot = int((it - start_avg_it) // steps_per_rotation)
                 idx_azi = int((it - start_avg_it) % steps_per_rotation)
@@ -134,10 +148,11 @@ for yaw_val in yaws_deg:
                     Veff_history[idx_rot, idx_azi, :] = Veff
                     Alpha_history[idx_rot, idx_azi, :] = Alpha
             
+            # Affichage console tous les 30 pas (1 tour)
             if (it + 1) % 30 == 0: 
-                print(f"  TSR {tsr_val} | Pas {it+1}/{total_steps} | Newton: {iters_taken} iters | Err: {max_err:.2e}")
+                print(f"  Pas {it+1}/{total_steps} | Winner: {b_algo.capitalize()} | Relax Next: {current_relax:.3f} | Err: {m_err:.2e}")
 
-        # Compilation des résultats du Yaw pour toutes les positions radiales et azimutales
+        # --- COMPILATION DU YAW ---
         Fn_mean = np.mean(Fn_history, axis=0)
         Ft_mean = np.mean(Ft_history, axis=0)
         Veff_mean = np.mean(Veff_history, axis=0)
@@ -146,20 +161,20 @@ for yaw_val in yaws_deg:
         for a_idx in range(steps_per_rotation):
             theta = a_idx * DegreesPerTimeStep
             for ir, r_val in enumerate(centersRadius):
-                current_yaw_dataset.append({
-                    'TSR': tsr_val,                 
-                    'r': r_val,                     
-                    'theta': theta,                 
+                current_tsr_dataset.append({
+                    'Yaw': yaw_val,
+                    'r': r_val,
+                    'theta': theta,
                     'Fn': Fn_mean[a_idx, ir], 
                     'Ft': Ft_mean[a_idx, ir],
-                    'V_eff': Veff_mean[a_idx, ir],  
-                    'Alpha_deg': np.degrees(Alpha_mean[a_idx, ir]) 
+                    'V_eff': Veff_mean[a_idx, ir],
+                    'Alpha_deg': np.degrees(Alpha_mean[a_idx, ir])
                 })
 
-    # Sauvegarde d'un fichier CSV unique par Yaw
-    df_yaw = pd.DataFrame(current_yaw_dataset)
-    filename = os.path.join(outDir, f'results_yaw_{yaw_val}deg.csv')
-    df_yaw.to_csv(filename, index=False)
-    print(f">> Fichier {filename} généré avec succès en {time.time() - yaw_start:.1f}s.")
+    # --- ÉCRITURE DU FICHIER TSR ---
+    df_tsr = pd.DataFrame(current_tsr_dataset)
+    filename = os.path.join(outDir, f'results_TSR_{tsr_val}.csv')
+    df_tsr.to_csv(filename, index=False)
+    print(f">> Fichier {filename} généré en {time.time() - tsr_start:.1f}s.")
 
-print(f"\nCAMPAGNE NEWTON PUR TERMINEE en {time.time() - global_start_time:.1f}s.")
+print(f"\nCAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")

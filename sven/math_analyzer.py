@@ -4,12 +4,7 @@ from sven.kernels import influenceMatrixNumba
 
 class MathAnalyzer:
     def __init__(self):
-        self.active_eta_opt = False 
-        self.reset()
-
-    def reset(self):
-        self.eta_relax_init_history = []
-        self.eta_relax_sol_history = []
+        pass # Plus besoin de variables d'historique
 
     def get_F_matrix(self, blades, deltaFlts):
         """ Calcule la matrice d'influence géométrique """
@@ -100,7 +95,6 @@ class MathAnalyzer:
         eigenvalues = np.linalg.eigvals(J)
         re_lambda = np.real(eigenvalues)
         
-
         denom = np.abs(eigenvalues - 1.0)**2
         denom = np.where(denom < 1e-14, 1e-14, denom)
         kappas = 2.0 * (1.0 - re_lambda) / denom
@@ -111,16 +105,3 @@ class MathAnalyzer:
             return float(np.min(kappas))
         else:
             return 0.0
-
-    def evaluate_eta_opt(self, blades, deltaFlts, is_init=True):
-        """ Enregistre la valeur optimale de eta si la fonctionnalité est activée """
-        if not self.active_eta_opt:
-            return
-        
-        J = self.compute_jacobian(blades, deltaFlts)
-        eta_opt = self.compute_optimal_eta(J)
-        
-        if is_init:
-            self.eta_relax_init_history.append(eta_opt)
-        else:
-            self.eta_relax_sol_history.append(eta_opt)
