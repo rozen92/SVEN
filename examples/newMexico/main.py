@@ -16,7 +16,7 @@ from sven.blade import *
 from sven.solver import update
 
 # Dossier de sortie
-outDir = 'outputs_campagne_intra_hybrid_pure'
+outDir = 'outputs_campagne_full_newton_hybrid'
 if not os.path.exists(outDir):
     os.makedirs(outDir)
 
@@ -33,20 +33,30 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     chord_targets = np.abs(data[:, 2].astype(float)) 
     airfoil_names = data[:, 3]
     N = len(r_targets)
-    nodesRadius = np.zeros(N + 1); nodesChord = np.zeros(N + 1); nodesTwistAngles = np.zeros(N + 1)
-    nodesRadius[0] = hubRadius; nodesChord[0] = chord_targets[0]; nodesTwistAngles[0] = twist_targets[0]
+    nodesRadius = np.zeros(N + 1)
+    nodesChord = np.zeros(N + 1)
+    nodesTwistAngles = np.zeros(N + 1)
+    nodesRadius[0] = hubRadius
+    nodesChord[0] = chord_targets[0]
+    nodesTwistAngles[0] = twist_targets[0]
+    
     for i in range(N):
         nodesRadius[i+1] = 2 * r_targets[i] - nodesRadius[i]
         nodesChord[i+1] = 2 * chord_targets[i] - nodesChord[i]
         nodesTwistAngles[i+1] = 2 * twist_targets[i] - nodesTwistAngles[i]
+        
     centersAirfoils = []
     for foilName in airfoil_names:
         foil_path = os.path.join(script_dir, 'geometry', 'Airfoils2', f"{foilName}.foil")
         centersAirfoils.append(Airfoil(foil_path, headerLength=1))
+        
     myWT = windTurbine(nBlades, [0., 0., 0.], hubRadius, rotationalVelocity, windVelocity, bladePitch)
     blades = myWT.initializeTurbine(nodesRadius, nodesChord, nearWakeLength, centersAirfoils, nodesTwistAngles, myWT.nBlades)
-    for b in blades: b.centerChords = chord_targets.copy()
-    return blades, myWT, 0.01, 1e-5
+    
+    for b in blades: 
+        b.centerChords = chord_targets.copy()
+        
+    return blades, myWT, 0.01, 1e-5 
 
 # -----------------------------------------------------------------------------
 # Paramètres de la campagne
@@ -61,18 +71,19 @@ steps_per_rotation = int(360. / DegreesPerTimeStep)
 Omega = 44.5163679 
 R_max = 2.25 
 
-# Stratégie Intra-Step Hybrid
-total_inner_iter = 15
-picard_iters_fixed = 5
+# Stratégie Full-Newton Hybrid
+total_inner_iter = 20
+picard_iters_fixed = 15
 
 # Grilles
-tsrs = np.array([8])
+tsrs = np.array([4, 6, 8, 10, 12])
 yaws_deg = np.array([-15.0, -10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0])
 
 global_start_time = time.time()
 
-print(f"Lancement Campagne Intra-Step Pure")
-print(f"Chaque pas de temps: {picard_iters_fixed} iters Picard puis {total_inner_iter - picard_iters_fixed} iters Newton")
+print(f"Lancement Campagne Full-Newton Hybrid (Groupement par TSR)")
+print(f"Stratégie : {picard_iters_fixed} iters Picard puis {total_inner_iter - picard_iters_fixed} iters Newton")
+print(f"Légende Logs : Win(N/P)=Vainqueur | it*=Iter Argmin (!=rebond) | J=Evals Jacobienne | Rel=Relaxation\n")
 
 # =============================================================================
 # BOUCLE EXTERIEURE : TSR
@@ -81,7 +92,7 @@ for tsr_val in tsrs:
     tsr_start = time.time()
     current_tsr_dataset = [] 
     
-    print(f"\n############################################################")
+    print(f"############################################################")
     print(f" TRAITEMENT TSR : {tsr_val}")
     print(f"############################################################")
 
@@ -106,7 +117,6 @@ for tsr_val in tsrs:
         refAzimuth = -WindTurbine.rotationalVelocity * timeStep
         timeSim = 0.
         
-        # Initialisation de la relaxation 
         current_relax = 0.35 
 
         for it in range(total_steps):
@@ -114,8 +124,8 @@ for tsr_val in tsrs:
             WindTurbine.updateTurbine(refAzimuth)
             timeSim += timeStep
             
-            # Application de la stratégie Intra-Step Hybride uniformément
-            m_err, s_time, its, b_algo, e_opt = update(
+            # Appel du solveur
+            m_err, s_time, p_its, n_its, b_algo, e_opt, early_min, b_iter, j_evals = update(
                 Blades, uInfty, timeStep, timeSim, total_inner_iter, 
                 deltaFlts, global_start_time, [], 
                 algo_type="hybrid", tol=tol_hybrid, 
@@ -123,11 +133,18 @@ for tsr_val in tsrs:
                 current_relax=current_relax
             )
             
-            # --- DIAGNOSTICS ET ADAPTATION ---
-            if b_algo == "picard":
-                print(f"  [Alerte Stabilité] Pas {it+1}: Picard a dû sauver le pas (Err: {m_err:.2e})")
-            elif m_err > tol_hybrid:
-                print(f"  [Warning] Pas {it+1}: Newton n'a pas atteint {tol_hybrid} (Err: {m_err:.2e})")
+            # --- LOGS COMPACTS ---
+            status = f"{p_its}P+{n_its}N" if n_its > 0 else f"{p_its}P"
+            win_char = b_algo[0].upper() # 'N' ou 'P'
+            rebond = "!" if early_min else " "
+            
+            # Affichage console tous les 30 pas
+            if (it + 1) % 30 == 0: 
+                print(f" Pas {it+1:3}/{total_steps} | {status:<7} | Win:{win_char} | it*:{b_iter:>2}{rebond} | J:{j_evals} | Rel:{current_relax:.3f} | Err:{m_err:.1e}")
+
+            # Warning spécifique si Newton a échoué
+            if b_algo == "Picard" and n_its > 0 and (it + 1) % 30 != 0:
+                print(f" [Alerte] Pas {it+1:3} | Newton a divergé. Picard restaure it*:{b_iter} | Err:{m_err:.1e}")
                 
             # Mise à jour du taux de relaxation pour le prochain pas de temps
             if e_opt > 0:
@@ -147,10 +164,6 @@ for tsr_val in tsrs:
                     Ft_history[idx_rot, idx_azi, :] = Ft
                     Veff_history[idx_rot, idx_azi, :] = Veff
                     Alpha_history[idx_rot, idx_azi, :] = Alpha
-            
-            # Affichage console tous les 30 pas (1 tour)
-            if (it + 1) % 30 == 0: 
-                print(f"  Pas {it+1}/{total_steps} | Winner: {b_algo.capitalize()} | Relax Next: {current_relax:.3f} | Err: {m_err:.2e}")
 
         # --- COMPILATION DU YAW ---
         Fn_mean = np.mean(Fn_history, axis=0)
@@ -175,6 +188,6 @@ for tsr_val in tsrs:
     df_tsr = pd.DataFrame(current_tsr_dataset)
     filename = os.path.join(outDir, f'results_TSR_{tsr_val}.csv')
     df_tsr.to_csv(filename, index=False)
-    print(f">> Fichier {filename} généré en {time.time() - tsr_start:.1f}s.")
+    print(f">> Fichier {filename} généré en {time.time() - tsr_start:.1f}s.\n")
 
 print(f"\nCAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")
