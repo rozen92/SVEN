@@ -56,7 +56,7 @@ max_picard_iters = 500  # Budget total pour le train Picard
 p_block = 5           
 n_block = 5           
 
-tsrs = np.array([4, 6, 8, 10, 12])
+tsrs = np.array([8])
 yaws_deg = np.array([-15.0, -10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0])
 
 global_start_time = time.time()
