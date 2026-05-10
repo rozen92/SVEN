@@ -83,6 +83,9 @@ def update(
             final_err = current_err
             break
 
+        if n_block == 0: # cas particlier où on ne veut pas faire de Newton du tout
+            continue
+
         # --- SAUVEGARDE AVANT DIGRESSION ---
         end_picard_gammas = [b.gammaBound.copy() for b in blades]
 
@@ -152,6 +155,10 @@ def update(
             # Newton a raté, on double le nombre d'itérations de Picard
             # On le plafonne à 40 pour éviter qu'un bloc ne dévore tout le budget restant d'un coup.
             current_p_block = min(current_p_block * 2, 40)
+
+            if p_block == 0: # cas particulier où on ne fait jamais de Picard du tout
+                stop_reason = "Newton Diverged"
+                break
 
     # --- SÉCURITÉ DE FIN DE BOUCLE (Restauration de l'Argmin) ---
     if not newton_won and current_err > tol:
