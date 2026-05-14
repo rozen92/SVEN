@@ -3,6 +3,8 @@ import sys
 import numpy as np
 import pandas as pd
 import time
+from scipy.stats.qmc import LatinHypercube as lhc
+
 
 # --- Configuration des chemins ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -56,22 +58,41 @@ max_picard_iters = 5000  # Budget total pour le train Picard
 p_block = 5           
 n_block = 5           
 
-tsrs = np.array([4, 6, 8, 10, 12])
-yaws_deg = np.array([-15.0, -10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0])
+## Préparation de l'échantillonnage LHC
+sampler = lhc(2, strength = 1, seed = 42)
+samples = sampler.random(n = 10)
+
+tsrs = samples[:,0]*8 + 4
+yaws_deg = samples[:,1]*60 - 30
+
+
+tsrs = np.array([4])
+yaws_deg = np.array([-15.0])
 
 global_start_time = time.time()
+
+file_log = 'outputs_adaptive_hybrid/log_TSR.txt'
+log = open(file_log, 'a', encoding = 'utf-8')
 
 print(f"Lancement Campagne Hybrid 'Test & Rollback'")
 print(f"Stratégie : {p_block}P + {n_block}N (Budget Picard: {max_picard_iters})")
 print(f"Légende   : Win=Vainqueur | J=Succès/Evals | Rel=Relax\n")
 
+log.write(f"Lancement Campagne Hybrid 'Test & Rollback'")
+log.write(f"Stratégie : {p_block}P + {n_block}N (Budget Picard: {max_picard_iters})")
+log.write(f"Légende   : Win=Vainqueur | J=Succès/Evals | Rel=Relax\n")
+
 for tsr_val in tsrs:
     tsr_start = time.time(); current_tsr_dataset = [] 
     print(f"#################### TSR : {tsr_val} ####################")
+    log.write(f"#################### TSR : {tsr_val} ####################")
 
     for yaw_val in yaws_deg:
         uInfty = np.array([((Omega*R_max)/tsr_val)*np.cos(np.radians(yaw_val)), ((Omega*R_max)/tsr_val)*np.sin(np.radians(yaw_val)), 0.0], dtype=np.float32)
+        
         print(f"\n--- Yaw {yaw_val}° ---")
+        log.write(f"\n--- Yaw {yaw_val}° ---")
+        
         Blades, WT, deltaFlts, tol_hybrid = NewMexicoWindTurbine(uInfty, density, 3600)
         
         cR = 0.5 * (WT.nodesRadius[1:] + WT.nodesRadius[:-1])
@@ -106,13 +127,18 @@ for tsr_val in tsrs:
 
             # --- ALERTES CONDITIONNELLES ---
             if m_err > tol_hybrid:
+
                 print(f" [MAXI] Pas {it+1:3}/{total_steps} | Précision non atteinte ({p_its}P tentés) | Err:{m_err:.1e}")
+                log.write(f" [MAXI] Pas {it+1:3}/{total_steps} | Précision non atteinte ({p_its}P tentés) | Err:{m_err:.1e}\n")
+            
             else:
                 # --- LOGS D'ANALYSE SI CONVERGÉ (Tous les 30 pas) ---
                 if (it + 1) % 30 == 0:
                     status = f"{p_its}P+{n_its}N"
                     win_char = win[0].upper()
+            
                     print(f"        Pas {it+1:3}/{total_steps} | {status:<7} | Win:{win_char} | J:{j_ok}/{j_ev} | Rel:{current_relax:.3f} | Err:{m_err:.1e}")
+                    log.write(f"        Pas {it+1:3}/{total_steps} | {status:<7} | Win:{win_char} | J:{j_ok}/{j_ev} | Rel:{current_relax:.3f} | Err:{m_err:.1e}\n")
 
             # --- STOCKAGE MOYENNAGE ---
             if it >= start_avg_it:
@@ -139,7 +165,8 @@ for tsr_val in tsrs:
 
         # Impression sur une seule ligne
         print(f"        -> [BILAN] Gamma: Min={np.min(Gamma_flat):.2f} Moy={np.mean(Gamma_flat):.2f} Max={np.max(Gamma_flat):.2f} Std={np.std(Gamma_flat):.2f} | Périodicité (Max Δ/Moy): Fn={Fn_ptp:.2e} ({Fn_rel:.2f}%) Ft={Ft_ptp:.2e} ({Ft_rel:.2f}%)")
-
+        log.write(f"\n        -> [BILAN] Gamma: Min={np.min(Gamma_flat):.2f} Moy={np.mean(Gamma_flat):.2f} Max={np.max(Gamma_flat):.2f} Std={np.std(Gamma_flat):.2f} | Périodicité (Max Δ/Moy): Fn={Fn_ptp:.2e} ({Fn_rel:.2f}%) Ft={Ft_ptp:.2e} ({Ft_rel:.2f}%)")
+        
         # Compilation TSR
         Fn_mean = np.mean(Fn_history, axis=0)
         Ft_mean = np.mean(Ft_history, axis=0)
@@ -158,5 +185,12 @@ for tsr_val in tsrs:
     df_tsr = pd.DataFrame(current_tsr_dataset)
     df_tsr.to_csv(os.path.join(outDir, f'results_TSR_{tsr_val}.csv'), index=False)
     print(f"\n>> Fichier TSR {tsr_val} généré en {time.time() - tsr_start:.1f}s.\n")
+    log.write(f"\n>> Fichier TSR {tsr_val} généré en {time.time() - tsr_start:.1f}s.\n")
+    log.write("\n\n")
+    log.write("#"*120+"\n")
+    log.write("#"*120+"\n")
+    log.write("#"*120+"\n")
+    log.write("\n\n")
 
 print(f"CAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")
+log.write(f"\n\nCAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")
