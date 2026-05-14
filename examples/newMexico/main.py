@@ -61,13 +61,7 @@ n_block = 5
 
 ## Préparation de l'échantillonnage LHC
 sampler = lhc(2, strength = 1, seed = 42)
-samples = sampler.random(n = 10)
-
-tsrs = samples[:,0]*8 + 4
-yaws_deg = samples[:,1]*60 - 30
-
-tsrs = np.array([4])
-yaws_deg = np.array([-15.0])
+samples = sampler.random(n = 100)
 
 global_start_time = time.time()
 
@@ -80,37 +74,37 @@ print(f"Légende   : Win=Vainqueur | J=Succès/Evals | Rel=Relax\n")
 
 log.write(f"Lancement Campagne Hybrid 'Test & Rollback'\n")
 log.write(f"Stratégie : {p_block}P + {n_block}N (Budget Picard: {max_picard_iters})\n")
-log.write(f"Légende   : Win=Vainqueur | J=Succès/Evals | Rel=Relax\n\n")
+log.write(f"Légende   : Win=Vainqueur | J=Succès/Evals | Rel=Relax")
+log.write("\n\n")
 
-for tsr_val in tsrs:
-    tsr_start = time.time(); current_tsr_dataset = [] 
-    print(f"#################### TSR : {tsr_val} ####################")
-    log.write(f"#################### TSR : {tsr_val} ####################\n")
+current_tsr_dataset = []
+for i in range(2) : # boucler sur les 10 premiers couples
+    tsr_val = samples[i,0]
+    yaw_val = samples[i,1]    
+    tsr_start = time.time();  
+    print(f"#################### (TSR,YAW) : ({tsr_val.round(3)},{yaw_val.round(3)}) ####################")
+    log.write(f"#################### (TSR,YAW) : ({tsr_val.round(3)},{yaw_val.round(3)}) ####################\n")
 
-    for yaw_val in yaws_deg:
-        uInfty = np.array([((Omega*R_max)/tsr_val)*np.cos(np.radians(yaw_val)), ((Omega*R_max)/tsr_val)*np.sin(np.radians(yaw_val)), 0.0], dtype=np.float32)
+    #for yaw_val in yaws_deg:
+    uInfty = np.array([((Omega*R_max)/tsr_val)*np.cos(np.radians(yaw_val)), ((Omega*R_max)/tsr_val)*np.sin(np.radians(yaw_val)), 0.0], dtype=np.float32)
         
-        print(f"\n--- Yaw {yaw_val}° ---")
-        log.write(f"\n--- Yaw {yaw_val}° ---\n")
+    Blades, WT, deltaFlts, tol_hybrid = NewMexicoWindTurbine(uInfty, density, 3600)
         
-        Blades, WT, deltaFlts, tol_hybrid = NewMexicoWindTurbine(uInfty, density, 3600)
+    cR = 0.5 * (WT.nodesRadius[1:] + WT.nodesRadius[:-1])
+    tStep = np.radians(DegreesPerTimeStep) / WT.rotationalVelocity
         
-        cR = 0.5 * (WT.nodesRadius[1:] + WT.nodesRadius[:-1])
-        tStep = np.radians(DegreesPerTimeStep) / WT.rotationalVelocity
-        
-        # Le nombre de pas total théorique maximum
-        total_max_steps = int((max_rotations * 360.) / DegreesPerTimeStep)
+    # Le nombre de pas total théorique maximum
+    total_max_steps = int((max_rotations * 360.) / DegreesPerTimeStep)
 
-        # Buffer tournant de taille (3, azimuts, rayons)
-        Fn_history = np.zeros((N_avg, steps_per_rotation, len(cR)))
-        Ft_history = np.zeros_like(Fn_history)
-        Veff_history = np.zeros_like(Fn_history)
-        Alpha_history = np.zeros_like(Fn_history)
-        Gamma_history = np.zeros_like(Fn_history)
+    Fn_history = np.zeros((N_avg, steps_per_rotation, len(cR)))
+    Ft_history = np.zeros_like(Fn_history)
+    Veff_history = np.zeros_like(Fn_history)
+    Alpha_history = np.zeros_like(Fn_history)
+    Gamma_history = np.zeros_like(Fn_history) # Nouveau : stockage de Gamma
 
-        current_relax = 0.35 
+    current_relax = 0.35 
 
-        for it in range(total_max_steps):
+    for it in range(total_max_steps):
             WT.updateTurbine(WT.rotationalVelocity * tStep * (it+1))
             
             m_err, st, p_its, n_its, win, e_opt, j_ev, j_ok = update(
@@ -179,13 +173,19 @@ for tsr_val in tsrs:
                         log.write("\n" + max_str + "\n\n")
                         break
 
-        # --- COMPILATION TSR (Sur les 3 derniers tours capturés dans le buffer) ---
-        Fn_mean = np.mean(Fn_history, axis=0)
-        Ft_mean = np.mean(Ft_history, axis=0)
-        Veff_mean = np.mean(Veff_history, axis=0)
-        Alpha_mean = np.mean(Alpha_history, axis=0)
+    # --- COMPILATION TSR (Sur les 3 derniers tours capturés dans le buffer) ---
+    Fn_mean = np.mean(Fn_history, axis=0)
+    Ft_mean = np.mean(Ft_history, axis=0)
+    Veff_mean = np.mean(Veff_history, axis=0)
+    Alpha_mean = np.mean(Alpha_history, axis=0)
 
-        for a_idx in range(steps_per_rotation):
+    # Compilation TSR
+    Fn_mean = np.mean(Fn_history, axis=0)
+    Ft_mean = np.mean(Ft_history, axis=0)
+    Veff_mean = np.mean(Veff_history, axis=0)
+    Alpha_mean = np.mean(Alpha_history, axis=0)
+
+    for a_idx in range(steps_per_rotation):
             theta = a_idx * DegreesPerTimeStep
             for ir, r_val in enumerate(cR):
                 current_tsr_dataset.append({
@@ -194,9 +194,6 @@ for tsr_val in tsrs:
                     'V_eff': Veff_mean[a_idx, ir], 'Alpha_deg': np.degrees(Alpha_mean[a_idx, ir])
                 })
 
-    df_tsr = pd.DataFrame(current_tsr_dataset)
-    df_tsr.to_csv(os.path.join(outDir, f'results_TSR_{tsr_val}.csv'), index=False)
-    
     print(f"\n>> Fichier TSR {tsr_val} généré en {time.time() - tsr_start:.1f}s.\n")
     log.write(f"\n>> Fichier TSR {tsr_val} généré en {time.time() - tsr_start:.1f}s.\n")
     log.write("\n\n")
@@ -204,6 +201,11 @@ for tsr_val in tsrs:
     log.write("#"*120+"\n")
     log.write("#"*120+"\n")
     log.write("\n\n")
+
+    if (i+1)%2 == 0 :
+        df_tsr = pd.DataFrame(current_tsr_dataset)
+        df_tsr.to_csv(os.path.join(outDir, f'results_{i+1}.csv'), index=False)
+        current_tsr_dataset = []
 
 print(f"CAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")
 log.write(f"\n\nCAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")

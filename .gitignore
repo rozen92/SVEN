@@ -11,7 +11,9 @@ examples/VAWT/*.png
 **/__pycache__/
 !examples/newMexico/outputs/dataset_forces_mexico.pt
 sven_venv
-
+*.csv
+*.xlsx
+*.txt
 
 notif.py
 mail.py
