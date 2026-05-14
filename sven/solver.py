@@ -153,8 +153,8 @@ def update(
             
             # --- EXPANSION GÉOMÉTRIQUE ---
             # Newton a raté, on double le nombre d'itérations de Picard
-            # On le plafonne à 40 pour éviter qu'un bloc ne dévore tout le budget restant d'un coup.
-            current_p_block = min(current_p_block * 2, 40)
+            # On le plafonne à 800 pour éviter qu'un bloc ne dévore tout le budget restant d'un coup.
+            current_p_block = min(current_p_block * 2, 800)
 
             if p_block == 0: # cas particulier où on ne fait jamais de Picard du tout
                 stop_reason = "Newton Diverged"
@@ -171,6 +171,13 @@ def update(
 
     # =========================================================================
 
+    # On calcule la Jacobienne sur l'état final retenu
+    J_final = analyzer.compute_jacobian(blades, deltaFlts)
+    final_eta_opt = analyzer.compute_optimal_eta(J_final)
+    eta_evals += 1
+    if final_eta_opt > 0:
+        valid_eta_count += 1
+        
     solver_time = time.time() - t_solver_start
     for iB, blade in enumerate(blades):
         blade.storeOldGammaBound([b.gammaBound for b in blades][iB])

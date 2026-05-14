@@ -52,7 +52,7 @@ Omega = 44.5163679
 R_max = 2.25
 
 # Paramètres de la stratégie "Test & Rollback"
-max_picard_iters = 500  # Budget total pour le train Picard  
+max_picard_iters = 5000  # Budget total pour le train Picard  
 p_block = 5           
 n_block = 5           
 
@@ -100,6 +100,9 @@ for tsr_val in tsrs:
             
             if e_opt > 0:
                 current_relax = min(0.35, 0.9 * e_opt)
+            else:
+                # Alerte si le point fixe retenu présente des valeurs propres mixtes/instables
+                print(f" [INSTABLE] Pas {it+1:3}/{total_steps} | Valeurs propres mixtes (eta_opt = 0) | Err:{m_err:.1e}")
 
             # --- ALERTES CONDITIONNELLES ---
             if m_err > tol_hybrid:
