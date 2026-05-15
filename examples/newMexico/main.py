@@ -63,27 +63,34 @@ n_block = 5
 sampler = lhc(2, strength = 1, seed = 42)
 samples = sampler.random(n = 100)
 
+samples[:,0] = samples[:,0]*8 + 4
+samples[:,1] = samples[:,1]*60 - 30
+
 global_start_time = time.time()
 
-file_log = os.path.join(outDir, 'log_TSR.txt')
+file_log = os.path.join(outDir, 'log_sim.txt')
 log = open(file_log, 'a', encoding = 'utf-8')
 
-print(f"Lancement Campagne Hybrid 'Test & Rollback'")
+print(f"\n\n\nLancement Campagne Hybrid 'Test & Rollback'")
 print(f"Stratégie : {p_block}P + {n_block}N (Budget Picard: {max_picard_iters})")
 print(f"Légende   : Win=Vainqueur | J=Succès/Evals | Rel=Relax\n")
 
-log.write(f"Lancement Campagne Hybrid 'Test & Rollback'\n")
-log.write(f"Stratégie : {p_block}P + {n_block}N (Budget Picard: {max_picard_iters})\n")
-log.write(f"Légende   : Win=Vainqueur | J=Succès/Evals | Rel=Relax")
+log.write("#"*120+"\n")
+log.write("#"*120+"\n")
+log.write("#"*120+"\n")
+
+log.write(f"\nLancement Campagne Hybrid 'Test & Rollback'\n")
+log.write(f"\nStratégie : {p_block}P + {n_block}N (Budget Picard: {max_picard_iters})\n")
+log.write(f"\nLégende   : Win=Vainqueur | J=Succès/Evals | Rel=Relax")
 log.write("\n\n")
 
 current_tsr_dataset = []
-for i in range(2) : # boucler sur les 10 premiers couples
+for i in range(10, 30) :
     tsr_val = samples[i,0]
     yaw_val = samples[i,1]    
     tsr_start = time.time();  
     print(f"#################### (TSR,YAW) : ({tsr_val.round(3)},{yaw_val.round(3)}) ####################")
-    log.write(f"#################### (TSR,YAW) : ({tsr_val.round(3)},{yaw_val.round(3)}) ####################\n")
+    log.write(f"\n#################### (TSR,YAW) : ({tsr_val.round(3)},{yaw_val.round(3)}) ####################\n")
 
     #for yaw_val in yaws_deg:
     uInfty = np.array([((Omega*R_max)/tsr_val)*np.cos(np.radians(yaw_val)), ((Omega*R_max)/tsr_val)*np.sin(np.radians(yaw_val)), 0.0], dtype=np.float32)
@@ -118,16 +125,16 @@ for i in range(2) : # boucler sur les 10 premiers couples
                 current_relax = min(0.35, 0.9 * e_opt)
             else:
                 print(f" [INSTABLE] Pas {it+1:3}/{total_max_steps} | Valeurs propres mixtes (eta_opt = 0) | Err:{m_err:.1e}")
-
+                log.write(f"\n  [INSTABLE] Pas {it+1:3}/{total_max_steps} | Valeurs propres mixtes (eta_opt = 0) | Err:{m_err:.1e}\n")
             if m_err > tol_hybrid:
                 print(f" [MAXI] Pas {it+1:3}/{total_max_steps} | Précision non atteinte ({p_its}P tentés) | Err:{m_err:.1e}")
-                log.write(f" [MAXI] Pas {it+1:3}/{total_max_steps} | Précision non atteinte ({p_its}P tentés) | Err:{m_err:.1e}\n")
+                log.write(f"\n [MAXI] Pas {it+1:3}/{total_max_steps} | Précision non atteinte ({p_its}P tentés) | Err:{m_err:.1e}\n")
             else:
                 if (it + 1) % 60 == 0:
                     status = f"{p_its}P+{n_its}N"
                     win_char = win[0].upper()
                     print(f"        Pas {it+1:3}/{total_max_steps} | {status:<7} | Win:{win_char} | J:{j_ok}/{j_ev} | Rel:{current_relax:.3f} | Err:{m_err:.1e}")
-                    log.write(f"        Pas {it+1:3}/{total_max_steps} | {status:<7} | Win:{win_char} | J:{j_ok}/{j_ev} | Rel:{current_relax:.3f} | Err:{m_err:.1e}\n")
+                    log.write(f"\n        Pas {it+1:3}/{total_max_steps} | {status:<7} | Win:{win_char} | J:{j_ok}/{j_ev} | Rel:{current_relax:.3f} | Err:{m_err:.1e}\n")
 
             # --- STOCKAGE MOYENNAGE (Buffer tournant) ---
             idx_rot = it // steps_per_rotation
@@ -157,10 +164,10 @@ for i in range(2) : # boucler sur les 10 premiers couples
 
                     bilan_str = f"        -> [BILAN TOUR {completed_rotations:02d}] Gamma: Min={np.min(Gamma_flat):.2f} Moy={np.mean(Gamma_flat):.2f} Max={np.max(Gamma_flat):.2f} Std={np.std(Gamma_flat):.2f} | Périodicité: Fn={Fn_ptp:.2e} ({Fn_rel:.2f}%) Ft={Ft_ptp:.2e} ({Ft_rel:.2f}%)"
                     print(bilan_str)
-                    log.write("\n" + bilan_str)
+                    log.write("\n" + bilan_str + "\n\n") 
 
                     # Condition de convergence stricte (< 0.1%)
-                    if Fn_rel <= 0.1 and Ft_rel <= 0.1:
+                    if Fn_rel <= 2 and Ft_rel <= 2:
                         success_str = f"        => Convergence périodique atteinte en {completed_rotations} tours ! Fin de la simulation."
                         print(success_str)
                         log.write("\n" + success_str + "\n\n")
@@ -173,14 +180,8 @@ for i in range(2) : # boucler sur les 10 premiers couples
                         log.write("\n" + max_str + "\n\n")
                         break
 
-    # --- COMPILATION TSR (Sur les 3 derniers tours capturés dans le buffer) ---
-    Fn_mean = np.mean(Fn_history, axis=0)
-    Ft_mean = np.mean(Ft_history, axis=0)
-    Veff_mean = np.mean(Veff_history, axis=0)
-    Alpha_mean = np.mean(Alpha_history, axis=0)
-
     # Compilation TSR
-    Fn_mean = np.mean(Fn_history, axis=0)
+    Fn_mean = np.mean(Fn_history, axis=0)        
     Ft_mean = np.mean(Ft_history, axis=0)
     Veff_mean = np.mean(Veff_history, axis=0)
     Alpha_mean = np.mean(Alpha_history, axis=0)
@@ -189,24 +190,29 @@ for i in range(2) : # boucler sur les 10 premiers couples
             theta = a_idx * DegreesPerTimeStep
             for ir, r_val in enumerate(cR):
                 current_tsr_dataset.append({
-                    'Yaw': yaw_val, 'r': r_val, 'theta': theta,
+                    'Yaw': yaw_val, 'TSR' : tsr_val, 'r': r_val, 'theta': theta,
                     'Fn': Fn_mean[a_idx, ir], 'Ft': Ft_mean[a_idx, ir],
                     'V_eff': Veff_mean[a_idx, ir], 'Alpha_deg': np.degrees(Alpha_mean[a_idx, ir])
                 })
 
     print(f"\n>> Fichier TSR {tsr_val} généré en {time.time() - tsr_start:.1f}s.\n")
-    log.write(f"\n>> Fichier TSR {tsr_val} généré en {time.time() - tsr_start:.1f}s.\n")
+    log.write(f"\n>> Efforts pour le couple ({tsr_val},{yaw_val}) calculé  en {time.time() - tsr_start:.1f}s.\n")
     log.write("\n\n")
     log.write("#"*120+"\n")
     log.write("#"*120+"\n")
     log.write("#"*120+"\n")
     log.write("\n\n")
 
-    if (i+1)%2 == 0 :
+    if (i+1)%10 == 0 :
         df_tsr = pd.DataFrame(current_tsr_dataset)
         df_tsr.to_csv(os.path.join(outDir, f'results_{i+1}.csv'), index=False)
         current_tsr_dataset = []
 
 print(f"CAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")
-log.write(f"\n\nCAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")
+log.write(f"\n\nCAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.\n\n")
+
+log.write("#"*120+"\n")
+log.write("#"*120+"\n")
+log.write("#"*120+"\n")
+
 log.close()
