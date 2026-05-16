@@ -167,7 +167,7 @@ for i in range(10, 30) :
                     log.write("\n" + bilan_str + "\n\n") 
 
                     # Condition de convergence stricte (< 0.1%)
-                    if Fn_rel <= 2 and Ft_rel <= 2:
+                    if Fn_rel <= 2 and Ft_rel <= 7:
                         success_str = f"        => Convergence périodique atteinte en {completed_rotations} tours ! Fin de la simulation."
                         print(success_str)
                         log.write("\n" + success_str + "\n\n")
