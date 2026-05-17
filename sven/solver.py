@@ -30,17 +30,14 @@ def update(
         blade.updateTrails(blade.gammaBound)
    
     # =========================================================================
-    # BOUCLE "TRAIN PICARD" AVEC EXPANSION GÉOMÉTRIQUE
+    # BOUCLE HYBRIDE AVEC ARBITRAGE (N-ème Picard vs Argmin Newton)
     # =========================================================================
     total_n = sum(len(b.centers) for b in blades)
     
     picard_count = 0
     eta_evals = 0
     valid_eta_count = 0
-    last_eta_opt = 0.0
     
-    absolute_best_err = float('inf')
-    absolute_best_gammas = [b.gammaBound.copy() for b in blades]
     best_algo_overall = "Picard"
     best_p_count = 0
     best_n_count = 0
@@ -48,13 +45,14 @@ def update(
     final_err = float('inf')
     newton_won = False
 
-    # --- DYNAMIQUE DES BLOCS ---
-    # current_p_block commence à 5 et doublera en cas d'échec de Newton
     current_p_block = p_block
 
+    # Initialisation pour le tout premier pas
+    current_err = float('inf')
+
     while picard_count < max_picard_iters:
-        current_err = float('inf')
-        # --- LE TRAIN PICARD (Avance sur current_p_block) ---
+        
+        # --- PICARD ---
         for _ in range(current_p_block):
             if picard_count >= max_picard_iters: break
             picard_count += 1
@@ -70,27 +68,29 @@ def update(
                 blade.updateSheds(new_g)
                 blade.updateTrails(new_g)
             
-            # Mise à jour de la mémoire absolue
-            if current_err < absolute_best_err:
-                absolute_best_err = current_err
-                absolute_best_gammas = [b.gammaBound.copy() for b in blades]
-                best_algo_overall = "Picard"
-                best_p_count = picard_count
-                best_n_count = 0
+            best_algo_overall = "Picard"
+            best_p_count = picard_count
+            best_n_count = 0
 
-        # Si Picard atteint la cible tout seul, on s'arrête
+        # Si Picard atteint la cible tout seul
         if current_err <= tol:
             final_err = current_err
             break
 
-        if n_block == 0: # cas particlier où on ne veut pas faire de Newton du tout
+        # Mode Picard Pur
+        if n_block == 0:
             continue
 
-        # --- SAUVEGARDE AVANT DIGRESSION ---
-        end_picard_gammas = [b.gammaBound.copy() for b in blades]
+        # --- SAUVEGARDE DU N-ème PICARD ---
+        picard_final_err = current_err
+        picard_final_gammas = [b.gammaBound.copy() for b in blades]
 
-        # --- L'ÉCLAIREUR NEWTON (Digression) ---
+        # --- L'ÉCLAIREUR NEWTON (Avec Argmin Local) ---
         current_n_count = 0
+        best_newton_err = float('inf')
+        best_newton_gammas = None
+        best_newton_iter = 0
+
         for _ in range(n_block):
             current_n_count += 1
             nearWakeInducedVelocities = nearWakeInduction(blades, deltaFlts)
@@ -105,20 +105,20 @@ def update(
             err_vector = F_G - Gamma
             newton_err = np.max(np.abs(err_vector))
 
-            # Mise à jour de la mémoire absolue
-            if newton_err < absolute_best_err:
-                absolute_best_err = newton_err
-                absolute_best_gammas = [b.gammaBound.copy() for b in blades]
-                best_algo_overall = "Newton"
-                best_p_count = picard_count
-                best_n_count = current_n_count
+            # ARGMIN LOCAL À NEWTON
+            if newton_err < best_newton_err:
+                best_newton_err = newton_err
+                best_newton_gammas = [b.gammaBound.copy() for b in blades]
+                best_newton_iter = current_n_count
 
             if newton_err <= tol:
                 newton_won = True
                 final_err = newton_err
+                best_algo_overall = "Newton"
+                best_p_count = picard_count
+                best_n_count = current_n_count
                 break
 
-            # Full Newton
             J = analyzer.compute_jacobian(blades, deltaFlts)
             last_eta_opt = analyzer.compute_optimal_eta(J)
             eta_evals += 1
@@ -140,44 +140,53 @@ def update(
                 blade.updateTrails(ng)
                 idx += n_sec
 
-        # --- ANALYSE DE LA DIGRESSION ---
+        # --- ARBITRAGE DU POINT DE DÉPART POUR LE CYCLE SUIVANT ---
         if newton_won:
             break
         else:
-            # Newton a échoué. On restaure le train Picard pour continuer la progression.
-            for b, g in zip(blades, end_picard_gammas):
-                b.gammaBound = g.copy()
-                b.newGammaBound = g.copy()
-                b.updateSheds(g)
-                b.updateTrails(g)
+            # Newton a échoué. On compare le meilleur Newton avec le dernier Picard.
+            if best_newton_err < picard_final_err:
+                # Le saut de Newton était meilleur : on part de là
+                for b, g in zip(blades, best_newton_gammas):
+                    b.gammaBound = g.copy()
+                    b.newGammaBound = g.copy()
+                    b.updateSheds(g)
+                    b.updateTrails(g)
+                current_err = best_newton_err
+                best_algo_overall = "Newton (Argmin)"
+                best_n_count = best_newton_iter
+            else:
+                # Newton a tout empiré : on repart du N-ème Picard
+                for b, g in zip(blades, picard_final_gammas):
+                    b.gammaBound = g.copy()
+                    b.newGammaBound = g.copy()
+                    b.updateSheds(g)
+                    b.updateTrails(g)
+                current_err = picard_final_err
+                best_algo_overall = "Picard"
+                best_n_count = 0
             
-            # --- EXPANSION GÉOMÉTRIQUE ---
-            # Newton a raté, on double le nombre d'itérations de Picard
-            # On le plafonne à 800 pour éviter qu'un bloc ne dévore tout le budget restant d'un coup.
+            # Expansion géométrique de Picard pour le prochain cycle
             current_p_block = min(current_p_block * 2, 800)
 
-            if p_block == 0: # cas particulier où on ne fait jamais de Picard du tout
-                stop_reason = "Newton Diverged"
+            # Mode Newton Pur
+            if p_block == 0:
                 break
 
-    # --- SÉCURITÉ DE FIN DE BOUCLE (Restauration de l'Argmin) ---
-    if not newton_won and current_err > tol:
-        for b, g in zip(blades, absolute_best_gammas):
-            b.gammaBound = g.copy()
-            b.newGammaBound = g.copy()
-            b.updateSheds(g)
-            b.updateTrails(g)
-        final_err = absolute_best_err
+    if not newton_won:
+        # Les pales sont déjà restaurées sur la meilleure configuration grâce à l'arbitrage
+        final_err = current_err
 
     # =========================================================================
-
-    # On calcule la Jacobienne sur l'état final retenu
+    # ANALYSE DE STABILITÉ DU POINT FIXE
+    # =========================================================================
     J_final = analyzer.compute_jacobian(blades, deltaFlts)
     final_eta_opt = analyzer.compute_optimal_eta(J_final)
     eta_evals += 1
     if final_eta_opt > 0:
         valid_eta_count += 1
-        
+    # =========================================================================
+
     solver_time = time.time() - t_solver_start
     for iB, blade in enumerate(blades):
         blade.storeOldGammaBound([b.gammaBound for b in blades][iB])
@@ -193,4 +202,4 @@ def update(
 
     iterationVect.append([time.time() - iterationTime, time.time() - startTime])
 
-    return final_err, solver_time, best_p_count, best_n_count, best_algo_overall, last_eta_opt, eta_evals, valid_eta_count
+    return final_err, solver_time, best_p_count, best_n_count, best_algo_overall, final_eta_opt, eta_evals, valid_eta_count
