@@ -3,7 +3,7 @@ import sys
 import numpy as np
 import pandas as pd
 import time
-from scipy.stats.qmc import LatinHypercube as lhc
+from scipy.interpolate import interp1d
 
 # --- Configuration des chemins ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -16,17 +16,41 @@ from sven.airfoil import *
 from sven.blade import *
 from sven.solver import update
 
-outDir = 'outputs_adaptive_hybrid'
+outDir = 'outputs_discretization_study'
 if not os.path.exists(outDir):
     os.makedirs(outDir)
 
 def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     sign = -1.0; hubRadius = 0.210; nBlades = 3; rotationalVelocity = 44.5163679; bladePitch = sign * 0.040143
-    geom_file = os.path.join(script_dir, 'geometry', 'blade.dat')
-    data = np.genfromtxt(geom_file, skip_header=1, dtype=str)
-    r_targets = data[:, 0].astype(float); twist_targets = -1.0 * data[:, 1].astype(float) 
-    chord_targets = np.abs(data[:, 2].astype(float)); airfoil_names = data[:, 3]
+    
+    # 1. Chargement des rayons exacts de CASTOR pour caler les milieux de sections
+    castor_file = os.path.join(script_dir, 'CASTOR_data.dat')
+    castor_raw = np.genfromtxt(castor_file, skip_header=3)
+    r_targets = castor_raw[:, 0]
     N = len(r_targets)
+    
+    # 2. Chargement de la géométrie originale pour interpolation
+    geom_file = os.path.join(script_dir, 'geometry', 'blade.dat')
+    data_geom = np.genfromtxt(geom_file, skip_header=1, dtype=str)
+    r_orig = data_geom[:, 0].astype(float)
+    twist_orig = -1.0 * data_geom[:, 1].astype(float) 
+    chord_orig = np.abs(data_geom[:, 2].astype(float))
+    airfoil_orig = data_geom[:, 3]
+    
+    # Interpolation linéaire des propriétés de la pale sur les rayons CASTOR
+    f_twist = interp1d(r_orig, twist_orig, kind='linear', fill_value="extrapolate")
+    f_chord = interp1d(r_orig, chord_orig, kind='linear', fill_value="extrapolate")
+    
+    twist_targets = f_twist(r_targets)
+    chord_targets = f_chord(r_targets)
+    
+    # Mapping des profils aérodynamiques (plus proche voisin)
+    airfoil_names = []
+    for r in r_targets:
+        idx_nearest = np.argmin(np.abs(r_orig - r))
+        airfoil_names.append(airfoil_orig[idx_nearest])
+        
+    # 3. Reconstruction des nœuds géométriques pour forcer le milieu exact
     nodesRadius = np.zeros(N + 1); nodesChord = np.zeros(N + 1); nodesTwistAngles = np.zeros(N + 1)
     nodesRadius[0] = hubRadius; nodesChord[0] = chord_targets[0]; nodesTwistAngles[0] = twist_targets[0]
     
@@ -39,174 +63,150 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
     myWT = windTurbine(nBlades, [0., 0., 0.], hubRadius, rotationalVelocity, windVelocity, bladePitch)
     blades = myWT.initializeTurbine(nodesRadius, nodesChord, nearWakeLength, centersAirfoils, nodesTwistAngles, myWT.nBlades)
     for b in blades: b.centerChords = chord_targets.copy()
+    
     return blades, myWT, 0.01, 1e-6 
 
 # -----------------------------------------------------------------------------
-# Paramètres de la campagne
+# Paramètres de l'étude de discrétisation
 # -----------------------------------------------------------------------------
-base_rotations = 10        # Tours minimum par défaut
-max_extra_rotations = 10   # Tours additionnels autorisés
-max_rotations = base_rotations + max_extra_rotations  # Soit 20 tours max
-DegreesPerTimeStep = 5.0
-density = 1.198
+base_rotations = 10        
+max_extra_rotations = 10   
+max_rotations = base_rotations + max_extra_rotations  
+DegreesPerTimeStep = 5.0   
 N_avg = 3
 steps_per_rotation = int(360.0 / DegreesPerTimeStep)
-Omega = 44.5163679
-R_max = 2.25
 
 # Paramètres de la stratégie "Test & Rollback"
 max_picard_iters = 5000  
 p_block = 5           
 n_block = 5           
 
-## Préparation de l'échantillonnage LHC
-sampler = lhc(2, strength = 1, seed = 42)
-samples = sampler.random(n = 100)
+# Les 3 cas EXACTS de Caroline (Vitesse, Densité, Index CASTOR)
+caroline_cases = [
+    {'label': '10', 'V': 10.05, 'rho': 1.197},
+    {'label': '15', 'V': 15.06, 'rho': 1.191},
+    {'label': '24', 'V': 24.05, 'rho': 1.195}
+]
 
 global_start_time = time.time()
+file_log = os.path.join(outDir, 'log_discretization.txt')
+log = open(file_log, 'a', encoding='utf-8')
 
-file_log = os.path.join(outDir, 'log_TSR.txt')
-log = open(file_log, 'a', encoding = 'utf-8')
+print(f"Lancement de la Campagne d'Étude de Discrétisation (Yaw = 0°)")
+log.write(f"Lancement de la Campagne d'Étude de Discrétisation (Yaw = 0°)\n\n")
 
-print(f"Lancement Campagne Hybrid 'Test & Rollback'")
-print(f"Stratégie : {p_block}P + {n_block}N (Budget Picard: {max_picard_iters})")
-print(f"Légende   : Win=Vainqueur | J=Succès/Evals | Rel=Relax\n")
+# Chargement initial des données CASTOR
+castor_file = os.path.join(script_dir, 'CASTOR_data.dat')
+castor_raw = np.genfromtxt(castor_file, skip_header=3)
 
-log.write(f"Lancement Campagne Hybrid 'Test & Rollback'\n")
-log.write(f"Stratégie : {p_block}P + {n_block}N (Budget Picard: {max_picard_iters})\n")
-log.write(f"Légende   : Win=Vainqueur | J=Succès/Evals | Rel=Relax")
-log.write("\n\n")
-
-current_tsr_dataset = []
-for i in range(2) : # boucler sur les 10 premiers couples
-    tsr_val = samples[i,0]
-    yaw_val = samples[i,1]    
-    tsr_start = time.time();  
-    print(f"#################### (TSR,YAW) : ({tsr_val.round(3)},{yaw_val.round(3)}) ####################")
-    log.write(f"#################### (TSR,YAW) : ({tsr_val.round(3)},{yaw_val.round(3)}) ####################\n")
-
-    #for yaw_val in yaws_deg:
-    uInfty = np.array([((Omega*R_max)/tsr_val)*np.cos(np.radians(yaw_val)), ((Omega*R_max)/tsr_val)*np.sin(np.radians(yaw_val)), 0.0], dtype=np.float32)
-        
-    Blades, WT, deltaFlts, tol_hybrid = NewMexicoWindTurbine(uInfty, density, 3600)
-        
+for case in caroline_cases:
+    case_start = time.time()
+    V_exact = case['V']
+    rho_exact = case['rho']
+    case_label = case['label']
+    
+    uInfty = np.array([V_exact, 0.0, 0.0], dtype=np.float32)
+    
+    print(f"\n#################### CAS : {case_label} (V={V_exact} m/s, rho={rho_exact}) ####################")
+    log.write(f"#################### CAS : {case_label} (V={V_exact} m/s, rho={rho_exact}) ####################\n")
+    
+    # On passe la densité exacte à l'initialisation
+    Blades, WT, deltaFlts, tol_hybrid = NewMexicoWindTurbine(uInfty, rho_exact, 3600)
     cR = 0.5 * (WT.nodesRadius[1:] + WT.nodesRadius[:-1])
     tStep = np.radians(DegreesPerTimeStep) / WT.rotationalVelocity
-        
-    # Le nombre de pas total théorique maximum
     total_max_steps = int((max_rotations * 360.) / DegreesPerTimeStep)
 
     Fn_history = np.zeros((N_avg, steps_per_rotation, len(cR)))
     Ft_history = np.zeros_like(Fn_history)
-    Veff_history = np.zeros_like(Fn_history)
-    Alpha_history = np.zeros_like(Fn_history)
-    Gamma_history = np.zeros_like(Fn_history) # Nouveau : stockage de Gamma
+
+    Fn_current_rot = np.zeros((steps_per_rotation, len(cR)))
+    Ft_current_rot = np.zeros_like(Fn_current_rot)
 
     current_relax = 0.35 
 
     for it in range(total_max_steps):
-            WT.updateTurbine(WT.rotationalVelocity * tStep * (it+1))
+        WT.updateTurbine(WT.rotationalVelocity * tStep * (it+1))
+        
+        m_err, st, p_its, n_its, win, e_opt, j_ev, j_ok = update(
+            Blades, uInfty, tStep, 0, max_picard_iters, 
+            deltaFlts, global_start_time, [], 
+            algo_type="hybrid", tol=tol_hybrid, 
+            p_block=p_block, n_block=n_block, current_relax=current_relax
+        )
+        
+        if e_opt > 0:
+            current_relax = min(0.35, 0.9 * e_opt)
+
+        if m_err > tol_hybrid:
+            log.write(f" [MAXI] Pas {it+1:3} | Précision non atteinte | Err:{m_err:.1e}\n")
+
+        idx_rot = it // steps_per_rotation
+        idx_azi = it % steps_per_rotation
+        hist_idx = idx_rot % N_avg  
+        
+        # Évaluation des forces avec la densité EXACTE du cas
+        Fn, Ft = WT.evaluateForces(rho_exact)
+        
+        Fn_history[hist_idx, idx_azi, :] = Fn
+        Ft_history[hist_idx, idx_azi, :] = Ft
+        Fn_current_rot[idx_azi, :] = Fn
+        Ft_current_rot[idx_azi, :] = Ft
+
+        if idx_azi == steps_per_rotation - 1:
+            completed_rotations = idx_rot + 1
             
-            m_err, st, p_its, n_its, win, e_opt, j_ev, j_ok = update(
-                Blades, uInfty, tStep, 0, max_picard_iters, 
-                deltaFlts, global_start_time, [], 
-                algo_type="hybrid", tol=tol_hybrid, 
-                p_block=p_block, n_block=n_block, current_relax=current_relax
-            )
+            Fn_ptp_intra = np.max(np.ptp(Fn_current_rot, axis=0))
+            Ft_ptp_intra = np.max(np.ptp(Ft_current_rot, axis=0))
             
-            if e_opt > 0:
-                current_relax = min(0.35, 0.9 * e_opt)
-            else:
-                print(f" [INSTABLE] Pas {it+1:3}/{total_max_steps} | Valeurs propres mixtes (eta_opt = 0) | Err:{m_err:.1e}")
+            if completed_rotations >= base_rotations:
+                Fn_ptp_inter = np.max(np.ptp(Fn_history, axis=0)) 
+                Ft_ptp_inter = np.max(np.ptp(Ft_history, axis=0))
+                Fn_mean_inter = np.mean(np.abs(Fn_history))
+                Ft_mean_inter = np.mean(np.abs(Ft_history))
+                Fn_rel = (Fn_ptp_inter / Fn_mean_inter * 100) if Fn_mean_inter > 0 else 0.0
+                Ft_rel = (Ft_ptp_inter / Ft_mean_inter * 100) if Ft_mean_inter > 0 else 0.0
 
-            if m_err > tol_hybrid:
-                print(f" [MAXI] Pas {it+1:3}/{total_max_steps} | Précision non atteinte ({p_its}P tentés) | Err:{m_err:.1e}")
-                log.write(f" [MAXI] Pas {it+1:3}/{total_max_steps} | Précision non atteinte ({p_its}P tentés) | Err:{m_err:.1e}\n")
-            else:
-                if (it + 1) % 60 == 0:
-                    status = f"{p_its}P+{n_its}N"
-                    win_char = win[0].upper()
-                    print(f"        Pas {it+1:3}/{total_max_steps} | {status:<7} | Win:{win_char} | J:{j_ok}/{j_ev} | Rel:{current_relax:.3f} | Err:{m_err:.1e}")
-                    log.write(f"        Pas {it+1:3}/{total_max_steps} | {status:<7} | Win:{win_char} | J:{j_ok}/{j_ev} | Rel:{current_relax:.3f} | Err:{m_err:.1e}\n")
+                bilan_str = (f"        -> [BILAN TOUR {completed_rotations:02d}] "
+                             f"Périodicité Inter: Fn={Fn_rel:.3f}% Ft={Ft_rel:.3f}% | "
+                             f"Erreur Amplitude Intra: Fn={Fn_ptp_intra:.2e} Ft={Ft_ptp_intra:.2e}")
+                print(bilan_str)
+                log.write(bilan_str + "\n")
 
-            # --- STOCKAGE MOYENNAGE (Buffer tournant) ---
-            idx_rot = it // steps_per_rotation
-            idx_azi = it % steps_per_rotation
-            hist_idx = idx_rot % N_avg  # Écrase l'ancien tour (0, 1, 2, 0, 1, 2...)
-            
-            Fn, Ft = WT.evaluateForces(density)
-            Fn_history[hist_idx, idx_azi, :] = Fn
-            Ft_history[hist_idx, idx_azi, :] = Ft
-            Veff_history[hist_idx, idx_azi, :] = WT.blades[0].effectiveVelocity
-            Alpha_history[hist_idx, idx_azi, :] = WT.blades[0].attackAngle
-            Gamma_history[hist_idx, idx_azi, :] = WT.blades[0].gammaBound
+                if Fn_rel <= 0.1 and Ft_rel <= 0.1:
+                    print(f"        => Convergence atteinte en {completed_rotations} tours !")
+                    break
+                elif completed_rotations == max_rotations:
+                    print(f"        => Limite de {max_rotations} tours atteinte.")
+                    break
 
-            # --- ARRÊT ADAPTATIF (À la fin de chaque rotation complète) ---
-            if idx_azi == steps_per_rotation - 1:
-                completed_rotations = idx_rot + 1
-                
-                # On ne commence à checker qu'à partir du 10ème tour
-                if completed_rotations >= base_rotations:
-                    Gamma_flat = Gamma_history.flatten()
-                    Fn_ptp = np.max(np.ptp(Fn_history, axis=0)) 
-                    Ft_ptp = np.max(np.ptp(Ft_history, axis=0))
-                    Fn_mean_abs = np.mean(np.abs(Fn_history))
-                    Ft_mean_abs = np.mean(np.abs(Ft_history))
-                    Fn_rel = (Fn_ptp / Fn_mean_abs * 100) if Fn_mean_abs > 0 else 0.0
-                    Ft_rel = (Ft_ptp / Ft_mean_abs * 100) if Ft_mean_abs > 0 else 0.0
+    Fn_final_sven = np.mean(Fn_current_rot, axis=0)
+    Ft_final_sven = np.mean(Ft_current_rot, axis=0)
+    
+    if case_label == '10':
+        Fn_castor = castor_raw[:, 1]; Ft_castor = castor_raw[:, 2]
+    elif case_label == '15':
+        Fn_castor = castor_raw[:, 3]; Ft_castor = castor_raw[:, 4]
+    else:
+        Fn_castor = castor_raw[:, 5]; Ft_castor = castor_raw[:, 6]
+        
+    rmse_Fn = np.sqrt(np.mean((Fn_final_sven - Fn_castor) ** 2))
+    rmse_Ft = np.sqrt(np.mean((Ft_final_sven - Ft_castor) ** 2))
+    
+    rmse_str = f">> [RÉSULTAT CAS {case_label}] RMSE -> Fn: {rmse_Fn:.4f} | Ft: {rmse_Ft:.4f} (en {time.time() - case_start:.1f}s)"
+    print(rmse_str)
+    log.write("\n" + rmse_str + "\n\n" + "#"*100 + "\n")
+    
+    df_res = pd.DataFrame({
+        'r_target': cR,
+        'Fn_SVEN_mean': Fn_final_sven,
+        'Ft_SVEN_mean': Ft_final_sven,
+        'Fn_CASTOR': Fn_castor,
+        'Ft_CASTOR': Ft_castor,
+        'Fn_Osci_Intra_PTP': np.ptp(Fn_current_rot, axis=0),
+        'Ft_Osci_Intra_PTP': np.ptp(Ft_current_rot, axis=0)
+    })
+    df_res.to_csv(os.path.join(outDir, f'radiales_forces_cas_{case_label}.csv'), index=False)
 
-                    bilan_str = f"        -> [BILAN TOUR {completed_rotations:02d}] Gamma: Min={np.min(Gamma_flat):.2f} Moy={np.mean(Gamma_flat):.2f} Max={np.max(Gamma_flat):.2f} Std={np.std(Gamma_flat):.2f} | Périodicité: Fn={Fn_ptp:.2e} ({Fn_rel:.2f}%) Ft={Ft_ptp:.2e} ({Ft_rel:.2f}%)"
-                    print(bilan_str)
-                    log.write("\n" + bilan_str)
-
-                    # Condition de convergence stricte (< 0.1%)
-                    if Fn_rel <= 0.1 and Ft_rel <= 0.1:
-                        success_str = f"        => Convergence périodique atteinte en {completed_rotations} tours ! Fin de la simulation."
-                        print(success_str)
-                        log.write("\n" + success_str + "\n\n")
-                        break
-                    
-                    # Condition d'échec / limite de budget
-                    elif completed_rotations == max_rotations:
-                        max_str = f"        => Limite stricte de {max_rotations} tours atteinte. Fin de la simulation."
-                        print(max_str)
-                        log.write("\n" + max_str + "\n\n")
-                        break
-
-    # --- COMPILATION TSR (Sur les 3 derniers tours capturés dans le buffer) ---
-    Fn_mean = np.mean(Fn_history, axis=0)
-    Ft_mean = np.mean(Ft_history, axis=0)
-    Veff_mean = np.mean(Veff_history, axis=0)
-    Alpha_mean = np.mean(Alpha_history, axis=0)
-
-    # Compilation TSR
-    Fn_mean = np.mean(Fn_history, axis=0)
-    Ft_mean = np.mean(Ft_history, axis=0)
-    Veff_mean = np.mean(Veff_history, axis=0)
-    Alpha_mean = np.mean(Alpha_history, axis=0)
-
-    for a_idx in range(steps_per_rotation):
-            theta = a_idx * DegreesPerTimeStep
-            for ir, r_val in enumerate(cR):
-                current_tsr_dataset.append({
-                    'Yaw': yaw_val, 'r': r_val, 'theta': theta,
-                    'Fn': Fn_mean[a_idx, ir], 'Ft': Ft_mean[a_idx, ir],
-                    'V_eff': Veff_mean[a_idx, ir], 'Alpha_deg': np.degrees(Alpha_mean[a_idx, ir])
-                })
-
-    print(f"\n>> Fichier TSR {tsr_val} généré en {time.time() - tsr_start:.1f}s.\n")
-    log.write(f"\n>> Fichier TSR {tsr_val} généré en {time.time() - tsr_start:.1f}s.\n")
-    log.write("\n\n")
-    log.write("#"*120+"\n")
-    log.write("#"*120+"\n")
-    log.write("#"*120+"\n")
-    log.write("\n\n")
-
-    if (i+1)%2 == 0 :
-        df_tsr = pd.DataFrame(current_tsr_dataset)
-        df_tsr.to_csv(os.path.join(outDir, f'results_{i+1}.csv'), index=False)
-        current_tsr_dataset = []
-
-print(f"CAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")
-log.write(f"\n\nCAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")
+print(f"\nETUDE DE DISCRETISATION COMPLETEE en {time.time() - global_start_time:.1f}s.")
+log.write(f"\nETUDE DE DISCRETISATION COMPLETEE en {time.time() - global_start_time:.1f}s.")
 log.close()
