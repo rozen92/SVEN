@@ -4,7 +4,7 @@ import pycuda.autoinit
 import pycuda.driver as drv
 from pycuda.compiler import SourceModule
 
-@jit(nopython=True, fastmath=True)
+@jit(nopython=True, fastmath=True, cache=True)
 def biotSavartFilaments(evaluationPoints, leftNodes, rightNodes, circulations, 
                         deltaFlts):
     """
@@ -87,7 +87,7 @@ __global__ void inducedVelocityKernel(float *destUx, float *destUy,
 # =========================================================================
 # NOYAU NUMBA CPU (POUR LA JACOBIENNE NEWTON)
 # =========================================================================
-@njit(parallel=True, fastmath=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def influenceMatrixNumba(evaluationPoints, leftNodes, rightNodes, deltaFlts):
     """
     Calcule la matrice d'influence géométrique brute (Gamma=1) 

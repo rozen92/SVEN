@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "/home/arthur/Bureau/QBladeCE_2.0.9.7_unix/QBladeCE_2.0.9.7/SIL_Interface"
+    ]
+}

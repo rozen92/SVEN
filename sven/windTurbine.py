@@ -157,7 +157,7 @@ class windTurbine:
         nodesTwistAngles, nBlades):
         """
         Initializes the turbine by setting up the blade nodes, airfoils, and 
-        wake properties.
+        wake propertieLatinHypercubes.
         """
 
         self.nodesRadius = nodesRadius

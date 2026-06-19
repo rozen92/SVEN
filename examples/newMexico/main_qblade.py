@@ -79,3 +79,5 @@ for i in range(10, 30) :
         if not is_success:  # If success is False, exit the loop
             print(f"Échec de la simulation pour (TSR, yaw) = ({tsr_val, yaw_val}), au {i}-ème pas de temps. Arrêt total.")
             break
+        
+        
