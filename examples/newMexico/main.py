@@ -66,6 +66,8 @@ samples = sampler.random(n = 100)
 samples[:,0] = samples[:,0]*8 + 4
 samples[:,1] = samples[:,1]*60 - 30
 
+print(samples)
+
 global_start_time = time.time()
 
 file_log = os.path.join(outDir, 'log_sim.txt')
