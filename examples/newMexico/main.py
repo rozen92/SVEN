@@ -161,19 +161,19 @@ for i in range(len(tsrs)) :
                     # On ne commence à checker qu'à partir du 10ème tour
                     if completed_rotations >= base_rotations:
                         Gamma_flat = Gamma_history.flatten()
-                        Fn_ptp = np.max(np.ptp(Fn_history, axis=0)) 
-                        Ft_ptp = np.max(np.ptp(Ft_history, axis=0))
-                        Fn_mean_abs = np.mean(np.abs(Fn_history))
-                        Ft_mean_abs = np.mean(np.abs(Ft_history))
-                        Fn_rel = (Fn_ptp / Fn_mean_abs * 100) if Fn_mean_abs > 0 else 0.0
-                        Ft_rel = (Ft_ptp / Ft_mean_abs * 100) if Ft_mean_abs > 0 else 0.0
+                        Fn_ptp_map = np.ptp(Fn_history, axis=0)
+                        Fn_mean_map = np.mean(np.abs(Fn_history), axis=0)
+                        Fn_rel = np.max(Fn_ptp_map / Fn_mean_map * 100)
+                        Ft_ptp_map = np.ptp(Ft_history, axis=0)
+                        Ft_mean_map = np.mean(np.abs(Ft_history), axis=0)
+                        Ft_rel = np.max(Ft_ptp_map / np.maximum(Ft_mean_map, 1.0) * 100)
 
-                        bilan_str = f"        -> [BILAN TOUR {completed_rotations:02d}] Gamma: Min={np.min(Gamma_flat):.2f} Moy={np.mean(Gamma_flat):.2f} Max={np.max(Gamma_flat):.2f} Std={np.std(Gamma_flat):.2f} | Périodicité: Fn={Fn_ptp:.2e} ({Fn_rel:.2f}%) Ft={Ft_ptp:.2e} ({Ft_rel:.2f}%)"
+                        bilan_str = f"        -> [BILAN TOUR {completed_rotations:02d}] Gamma: Min={np.min(Gamma_flat):.2f} Moy={np.mean(Gamma_flat):.2f} Max={np.max(Gamma_flat):.2f} Std={np.std(Gamma_flat):.2f} | Périodicité: Fn={np.max(Fn_ptp_map):.2e} ({Fn_rel:.2f}%) Ft={np.max(Ft_ptp_map):.2e} ({Ft_rel:.2f}%)"
                         print(bilan_str)
                         log.write("\n" + bilan_str + "\n\n") 
 
-                        # Condition de convergence stricte (< 0.1%)
-                        if Fn_rel <= 2 and Ft_rel <= 7:
+                        # Condition de convergence
+                        if Fn_rel <= 2 and Ft_rel <= 5:
                             success_str = f"        => Convergence périodique atteinte en {completed_rotations} tours ! Fin de la simulation."
                             print(success_str)
                             log.write("\n" + success_str + "\n\n")
