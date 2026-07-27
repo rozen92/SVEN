@@ -47,7 +47,7 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
 base_rotations = 10    # Tours minimum par défaut
 max_extra_rotations = 5   # Tours additionnels autorisés
 max_rotations = base_rotations + max_extra_rotations  # Soit 20 tours max
-DegreesPerTimeStep = 360
+DegreesPerTimeStep = 5.
 density = 1.198
 N_avg = 3
 steps_per_rotation = int(360.0 / DegreesPerTimeStep)
