@@ -6,6 +6,7 @@ import time
 from scipy.stats.qmc import LatinHypercube as lhc
 import matplotlib.pyplot as plt
 
+np.random.seed(42)
 
 cube = np.zeros((11, 2))
 
@@ -117,7 +118,6 @@ x = 0
 
 def lhs_extenderV1(old_seed, n_samples) : 
 
-    np.random.seed(old_seed)
     sampler = lhc(2, strength = 1, seed = old_seed)
     samples = sampler.random(n_samples)
 
@@ -187,7 +187,29 @@ if __name__ == '__main__' :
     samples = sampler.random(n = 100)
 
 
-    new_samples = lhs_extenderV1(old_seed = 42, n_samples = 100)
+    new_samples = lhs_extenderV1(old_seed = 42, n_samples = 5)
 
-    new_samples = rescale(new_samples)
+    fig, ax = plt.subplots()
+
+    X = np.linspace(0,1,11)
+    Y = np.linspace(0,1,11)
+
+    # Plot the vertical lines at specified positions
+    for x in X:
+        ax.axvline(x=x, color='black', linestyle='--', linewidth = 0.5)
+
+    # Plot the horizontal lines at specified positions
+    for y in Y:
+        ax.axhline(y=y, color='black', linestyle='--', linewidth = 0.5)
+
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+
+    ax.scatter(new_samples[:,0], new_samples[:,1], color = 'blue')
+    plt.show()
+
+    new_samples = rescale(new_samples)    
     print(new_samples)
+
+    for i in range(20,30,1) :
+        print(i)

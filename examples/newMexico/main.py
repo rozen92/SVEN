@@ -16,7 +16,7 @@ from sven.airfoil import *
 from sven.blade import *
 from sven.solver import update
 
-outDir = 'outputs_adaptive_hybrid'
+outDir = 'outputs_adaptive_hybrid/new_datas_100_199'
 if not os.path.exists(outDir):
     os.makedirs(outDir)
 
@@ -44,10 +44,10 @@ def NewMexicoWindTurbine(windVelocity, density, nearWakeLength):
 # -----------------------------------------------------------------------------
 # Paramètres de la campagne
 # -----------------------------------------------------------------------------
-base_rotations = 10        # Tours minimum par défaut
+base_rotations = 10    # Tours minimum par défaut
 max_extra_rotations = 5   # Tours additionnels autorisés
 max_rotations = base_rotations + max_extra_rotations  # Soit 20 tours max
-DegreesPerTimeStep = 5.0
+DegreesPerTimeStep = 360
 density = 1.198
 N_avg = 3
 steps_per_rotation = int(360.0 / DegreesPerTimeStep)
@@ -60,6 +60,7 @@ p_block = 5
 n_block = 5           
 
 ## Préparation de l'échantillonnage LHC
+"""
 sampler = lhc(2, strength = 1, seed = 42)
 samples = sampler.random(n = 100)
 
@@ -67,6 +68,28 @@ samples[:,0] = samples[:,0]*8 + 4
 samples[:,1] = samples[:,1]*60 - 30
 
 print(samples)
+"""
+
+tot = pd.read_csv('examples/newMexico/yaw_tsrs_100_199.csv')
+lhs_samples = tot.values
+
+## Si sur CyberLab :
+yaws = lhs_samples[0:25,0]
+tsrs = lhs_samples[0:25,1]
+"""
+## Si sur Lune : 
+yaws = lhs_samples[25:50,0]
+tsrs = lhs_samples[25:50,1]
+
+## Si sur Julot :
+yaws = lhs_samples[50:75,0]
+tsrs = lhs_samples[50:75,1]
+
+## Si sur Machine de JS :
+yaws = lhs_samples[75:,0]
+tsrs = lhs_samples[75:,1]
+"""
+
 
 global_start_time = time.time()
 
@@ -86,14 +109,10 @@ log.write(f"\nStratégie : {p_block}P + {n_block}N (Budget Picard: {max_picard_i
 log.write(f"\nLégende   : Win=Vainqueur | J=Succès/Evals | Rel=Relax")
 log.write("\n\n")
 
-yaws_deg = np.array([5.,10.,15.,20.,25.,30.]) # Angles de lacet
-tsrs = np.array([4,6,8,10,12])       # Tip Speed Ratios
-
 current_tsr_dataset = []
-for i in range(len(tsrs)) :
-    for j in range(len(yaws_deg)) :
+for i in range(len(yaws)) :
         tsr_val = tsrs[i]
-        yaw_val = yaws_deg[j]    
+        yaw_val = yaws[i]    
         tsr_start = time.time();  
         print(f"#################### ÈME COUPLE (TSR,YAW) : ({tsr_val.round(3)},{yaw_val.round(3)}) ####################")
         log.write(f"\n#################### ÈME COUPLE (TSR,YAW) : ({tsr_val.round(3)},{yaw_val.round(3)}) ####################\n")
@@ -209,10 +228,10 @@ for i in range(len(tsrs)) :
         log.write("#"*120+"\n")
         log.write("\n\n")
 
-        if (i+1)%35 == 0 :
-            df_tsr = pd.DataFrame(current_tsr_dataset)
-            df_tsr.to_csv(os.path.join(outDir, f'results_sanitycheck.csv'), index=False)
-            current_tsr_dataset = []
+
+df_tsr = pd.DataFrame(current_tsr_dataset)
+df_tsr.to_csv(os.path.join(outDir, f'results_cyberlab.csv'), index=False)
+
 
 print(f"CAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.")
 log.write(f"\n\nCAMPAGNE TERMINEE en {time.time() - global_start_time:.1f}s.\n\n")

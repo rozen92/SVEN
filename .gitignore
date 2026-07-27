@@ -12,6 +12,7 @@ examples/VAWT/*.png
 !examples/newMexico/outputs/dataset_forces_mexico.pt
 sven_venv
 *.csv
+!examples/newMexico/yaw_tsrs_100_199.csv
 *.xlsx
 *.txt
 
